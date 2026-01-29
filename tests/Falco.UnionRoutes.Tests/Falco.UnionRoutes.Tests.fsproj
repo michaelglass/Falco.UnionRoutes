@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <GenerateProgramFile>false</GenerateProgramFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <NoWarn>FS0988</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="RouteReflectionTests.fs" />
+    <Compile Include="PipelineTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="FsUnit.xUnit" Version="6.0.1" />
+  </ItemGroup>
+</Project>

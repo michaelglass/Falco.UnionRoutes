@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Package metadata -->
+    <PackageId>Falco.UnionRoutes</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Michael Glass</Authors>
+    <Description>Type-safe routing with discriminated unions and railway-oriented handler composition for Falco</Description>
+    <PackageTags>fsharp;falco;routing;union;discriminated-union;railway;web</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/michaelglass/falco-union-routes</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="RouteAttributes.fs" />
+    <Compile Include="RouteReflection.fs" />
+    <Compile Include="Pipeline.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Falco" Version="5.2.0" />
+  </ItemGroup>
+</Project>
