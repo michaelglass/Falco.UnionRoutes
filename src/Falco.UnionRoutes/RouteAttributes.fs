@@ -9,6 +9,7 @@ type RouteMethod =
     | Put = 2
     | Delete = 3
     | Patch = 4
+    | Any = 5
 
 /// HTTP method discriminated union (for use in route handlers)
 [<RequireQualifiedAccess>]
@@ -18,6 +19,7 @@ type HttpMethod =
     | Put
     | Delete
     | Patch
+    | Any
 
 /// Attribute to specify route metadata on union cases.
 ///
@@ -31,6 +33,9 @@ type HttpMethod =
 [<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
 type RouteAttribute(method: RouteMethod) =
     inherit Attribute()
+
+    /// Secondary constructor that defaults to Get
+    new() = RouteAttribute(RouteMethod.Get)
 
     /// The HTTP method for this route
     member _.Method = method

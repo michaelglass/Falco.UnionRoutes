@@ -2,6 +2,8 @@ namespace Falco.UnionRoutes
 
 open System
 open System.Text.RegularExpressions
+open Falco
+open Falco.Routing
 open FSharp.Reflection
 
 /// Reflection utilities for extracting route information from discriminated unions
@@ -19,6 +21,7 @@ module RouteReflection =
         | RouteMethod.Put -> HttpMethod.Put
         | RouteMethod.Delete -> HttpMethod.Delete
         | RouteMethod.Patch -> HttpMethod.Patch
+        | RouteMethod.Any -> HttpMethod.Any
         | _ -> HttpMethod.Get
 
     /// Get RouteAttribute from a union case, if present
@@ -27,21 +30,67 @@ module RouteReflection =
         |> Array.tryHead
         |> Option.map (fun a -> a :?> RouteAttribute)
 
-    /// Get path segment from a case (uses attribute Path if set, otherwise kebab-case name)
-    let private getPathSegment (case: UnionCaseInfo) : string =
-        match getRouteAttr case with
-        | Some attr when not (isNull attr.Path) -> attr.Path
-        | _ -> toKebabCase case.Name
-
-    /// Get HTTP method from a case's RouteAttribute
-    let private getMethod (case: UnionCaseInfo) : HttpMethod option =
-        getRouteAttr case |> Option.map (fun attr -> toHttpMethod attr.Method)
-
     /// Check if a type is a nested route union (for hierarchy traversal)
     let private isNestedRouteUnion (t: Type) =
         FSharpType.IsUnion(t)
         && t <> typeof<string>
         && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
+
+    /// Infer path segment from case fields (e.g., "of id: Guid" -> "{id}")
+    let private inferPathFromFields (case: UnionCaseInfo) : string option =
+        let fields = case.GetFields()
+
+        if fields.Length = 0 then
+            None
+        elif fields.Length = 1 && isNestedRouteUnion fields.[0].PropertyType then
+            None // Nested route union, not a path parameter
+        else
+            // Filter out nested route union fields
+            let pathFields =
+                fields |> Array.filter (fun f -> not (isNestedRouteUnion f.PropertyType))
+
+            if pathFields.Length = 0 then
+                None
+            else
+                pathFields
+                |> Array.map (fun f -> "{" + f.Name + "}")
+                |> String.concat "/"
+                |> Some
+
+    /// Check if a case has any non-nested-union fields (i.e., typed arguments like "of id: Guid")
+    let private hasTypedArgs (case: UnionCaseInfo) : bool =
+        case.GetFields()
+        |> Array.exists (fun f -> not (isNestedRouteUnion f.PropertyType))
+
+    /// Get path segment from a case (uses attribute Path if set, otherwise infers from fields or case name)
+    /// Special cases for empty path: "Root", "List", "Create", "Show"
+    let private getPathSegment (case: UnionCaseInfo) : string =
+        match getRouteAttr case with
+        | Some attr when not (isNull attr.Path) -> attr.Path
+        | _ ->
+            // First try to infer from fields
+            match inferPathFromFields case with
+            | Some path -> path
+            | None ->
+                // No inferable fields, check for special case names
+                match case.Name with
+                | "Root"
+                | "List"
+                | "Create"
+                | "Show" -> ""
+                | _ -> toKebabCase case.Name
+
+    /// Get HTTP method from a case's RouteAttribute (defaults based on case name)
+    /// Convention: Create -> POST, Delete -> DELETE, Patch -> PATCH, else GET
+    let private getMethod (case: UnionCaseInfo) : HttpMethod option =
+        match getRouteAttr case with
+        | Some attr -> Some(toHttpMethod attr.Method)
+        | None ->
+            match case.Name with
+            | "Create" -> Some HttpMethod.Post
+            | "Delete" -> Some HttpMethod.Delete
+            | "Patch" -> Some HttpMethod.Patch
+            | _ -> Some HttpMethod.Get
 
     /// Recursively extract route info by walking the union value hierarchy
     /// Returns (HttpMethod option, path segments list)
@@ -122,6 +171,62 @@ module RouteReflection =
         let info = routeInfo route
         (info.Method, info.Path)
 
+    /// Recursively extract a concrete link by walking the union value hierarchy
+    /// and substituting actual field values into the path.
+    // fsharplint:disable-next-line FL0085 - not tail-recursive by design
+    let rec private extractLink (value: obj) : string list =
+        let valueType = value.GetType()
+
+        if not (FSharpType.IsUnion(valueType)) then
+            []
+        else
+            let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+            let fieldInfos = case.GetFields()
+
+            // Get the path segment pattern for this case
+            let segmentPattern = getPathSegment case
+
+            // Check if any field is a nested route union
+            let nestedUnionFieldIndex =
+                fieldInfos |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+
+            // Substitute field values into the segment pattern
+            let segment =
+                if String.IsNullOrEmpty(segmentPattern) then
+                    ""
+                else
+                    fieldInfos
+                    |> Array.indexed
+                    |> Array.filter (fun (i, f) -> not (isNestedRouteUnion f.PropertyType) && i < fieldValues.Length)
+                    |> Array.fold
+                        (fun (seg: string) (i, f) ->
+                            let value = fieldValues.[i]
+                            let valueStr = if isNull value then "" else value.ToString()
+                            seg.Replace("{" + f.Name + "}", valueStr))
+                        segmentPattern
+
+            match nestedUnionFieldIndex with
+            | Some idx ->
+                let nestedValue = fieldValues.[idx]
+                let nestedSegments = extractLink nestedValue
+
+                if segment = "" then
+                    nestedSegments
+                else
+                    [ segment ] @ nestedSegments
+
+            | None -> if segment = "" then [] else [ segment ]
+
+    /// Generate a concrete URL path from a route value by substituting actual field values.
+    /// Example: link (Posts (Detail (Guid.Parse "abc..."))) returns "/posts/abc..."
+    let link (route: 'T) : string =
+        let segments = extractLink (box route)
+
+        if segments.IsEmpty then
+            "/"
+        else
+            "/" + String.concat "/" segments
+
     // =========================================================================
     // Route enumeration via reflection
     // =========================================================================
@@ -178,3 +283,26 @@ module RouteReflection =
     /// Parameterized routes are created with default values (Guid.Empty, "", 0, etc.)
     let allRoutes<'TRoute> () : 'TRoute list =
         enumerateUnionValues typeof<'TRoute> |> List.map (fun o -> o :?> 'TRoute)
+
+    // =========================================================================
+    // Falco integration
+    // =========================================================================
+
+    /// Convert HttpMethod to Falco's route function (get, post, put, delete, patch, any)
+    let toFalcoMethod (method: HttpMethod) =
+        match method with
+        | HttpMethod.Get -> get
+        | HttpMethod.Post -> post
+        | HttpMethod.Put -> put
+        | HttpMethod.Delete -> delete
+        | HttpMethod.Patch -> patch
+        | HttpMethod.Any -> any
+
+    /// Generate Falco endpoints from a route handler function.
+    /// Enumerates all routes of the given type and maps each to an HttpEndpoint.
+    let endpoints (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
+        allRoutes<'TRoute> ()
+        |> List.map (fun route ->
+            let info = routeInfo route
+            let handler = routeHandler route
+            toFalcoMethod info.Method info.Path handler)
