@@ -7,7 +7,7 @@ open System.Text.RegularExpressions
 
 let fsproj = "src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj"
 
-let run cmd args =
+let run (cmd: string) (args: string) =
     let psi = ProcessStartInfo(cmd, args)
     psi.RedirectStandardOutput <- true
     psi.RedirectStandardError <- true
