@@ -41,3 +41,13 @@ depends = ["format-check", "lint", "test"]
 description = "Create NuGet package"
 run = "dotnet pack src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj -c Release"
 depends = ["build"]
+
+[tasks.docs]
+description = "Generate API documentation"
+run = "dotnet fsdocs build --output output/docs --clean"
+depends = ["build"]
+
+[tasks.docs-watch]
+description = "Watch and serve documentation locally"
+run = "dotnet fsdocs watch"
+depends = ["build"]
