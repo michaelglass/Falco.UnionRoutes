@@ -48,3 +48,7 @@ Thumbs.db
 
 # Mise
 .mise.local.toml
+
+# Generated docs
+output/
+.fsdocs/
