@@ -15,13 +15,18 @@ description = "Run tests"
 run = "dotnet test"
 depends = ["build"]
 
+[tasks.example]
+description = "Run the example app"
+run = "dotnet run --project examples/ExampleApp"
+depends = ["build"]
+
 [tasks.format]
 description = "Format code with Fantomas"
-run = "dotnet fantomas src/ tests/"
+run = "dotnet fantomas src/ tests/ examples/"
 
 [tasks.format-check]
 description = "Check formatting without making changes"
-run = "dotnet fantomas src/ tests/ --check"
+run = "dotnet fantomas src/ tests/ examples/ --check"
 
 [tasks.lint]
 description = "Run FSharpLint"

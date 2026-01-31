@@ -24,7 +24,7 @@ See the complete working example at [`examples/ExampleApp/Program.fs`](examples/
 Use single-case unions for type-safe IDs:
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 23-24
+// examples/ExampleApp/Program.fs lines 24-25
 type UserId = UserId of Guid
 type PostId = PostId of Guid
 ```
@@ -34,31 +34,46 @@ type PostId = PostId of Guid
 Use `[<Route>]` attributes on union cases. Use `Path = ""` for wrapper cases that group nested routes:
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 33-44
-type PostRoute =
-    | [<Route(RouteMethod.Get, Path = "posts")>] List
-    | [<Route(RouteMethod.Get, Path = "posts/{id}")>] Detail of id: Guid
-    | [<Route(RouteMethod.Post, Path = "posts")>] Create
-    | [<Route(RouteMethod.Delete, Path = "posts/{id}")>] Delete of id: Guid
+// examples/ExampleApp/Program.fs lines 34-56
 
-type UserRoute = | [<Route(RouteMethod.Get, Path = "users/{id}")>] Profile of id: Guid
+// Convention-based routes (no attributes needed for common patterns)
+type PostRoute =
+    | List                   // GET /posts (List → empty path)
+    | Detail of id: Guid     // GET /posts/{id} (path from field name)
+    | Create                 // POST /posts (Create → POST + empty path)
+    | Delete of id: Guid     // DELETE /posts/{id} (Delete → DELETE)
+    | Patch of id: Guid      // PATCH /posts/{id} (Patch → PATCH)
+
+// Explicit attributes for custom paths or overriding conventions
+type UserRoute =
+    | [<Route(Path = "{userId}")>] Profile of userId: Guid  // Custom param name
+    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: Guid  // PUT instead of convention
+    | [<Route(Path = "me")>] Me  // Custom static path
+
+// Mix of conventions and explicit attributes
+type ApiRoute =
+    | [<Route(RouteMethod.Any, Path = "webhook")>] Webhook  // Any HTTP method
+    | [<Route(Path = "v2/status")>] Status  // Custom nested path
 
 type Route =
-    | [<Route(RouteMethod.Get, Path = "")>] Posts of PostRoute
-    | [<Route(RouteMethod.Get, Path = "")>] Users of UserRoute
-    | [<Route(RouteMethod.Get, Path = "health")>] Health
+    | Root                   // GET / (Root → empty path)
+    | Posts of PostRoute     // nested under /posts
+    | Users of UserRoute     // nested under /users
+    | Api of ApiRoute        // nested under /api
+    | Health                 // GET /health
 ```
 
 ### 3. Define Error Type and Response Handler
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 51-67
+// examples/ExampleApp/Program.fs lines 53-57
 type AppError =
     | NotAuthenticated
     | Forbidden
     | NotFound of string
     | BadRequest of string
 
+// examples/ExampleApp/Program.fs lines 91-106
 let toErrorResponse (error: AppError) : HttpHandler =
     match error with
     | NotAuthenticated -> Response.withStatusCode 401 >> Response.ofPlainText "Unauthorized"
@@ -72,7 +87,7 @@ let toErrorResponse (error: AppError) : HttpHandler =
 Pipelines extract and validate data from HTTP requests, short-circuiting on the first error:
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 75-91
+// examples/ExampleApp/Program.fs lines 115-130
 /// Extract user from auth header (simplified example)
 let requireAuth: Pipeline<UserId, AppError> =
     fun ctx ->
@@ -97,9 +112,10 @@ let requireUserId: Pipeline<UserId, AppError> =
 Use `Pipeline.run` for single pipelines, compose with `<&>` for multiple:
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 126-143
+// examples/ExampleApp/Program.fs lines 314-342
 let routeHandler (route: Route) : HttpHandler =
     match route with
+    | Route.Root -> Handlers.home
     | Route.Health -> Handlers.health
 
     // Public routes - no authentication required
@@ -114,51 +130,78 @@ let routeHandler (route: Route) : HttpHandler =
     // Composed pipelines - require both auth AND post ID
     | Route.Posts(PostRoute.Delete _) ->
         Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.deletePost
+    | Route.Posts(PostRoute.Patch _) ->
+        Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.patchPost
 
+    // User routes with different pipeline patterns
     | Route.Users(UserRoute.Profile _) -> Pipeline.run toErrorResponse requireUserId Handlers.getProfile
+    | Route.Users(UserRoute.Update _) -> Pipeline.run toErrorResponse requireUserId Handlers.updateUser
+    | Route.Users UserRoute.Me -> Handlers.currentUser
+
+    // API routes - simple handlers
+    | Route.Api ApiRoute.Webhook -> Handlers.webhook
+    | Route.Api ApiRoute.Status -> Handlers.apiStatus
 ```
 
 ### 6. Convert to Falco Endpoints
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 149-162
-let toFalcoMethod (method: HttpMethod) =
-    match method with
-    | HttpMethod.Get -> get
-    | HttpMethod.Post -> post
-    | HttpMethod.Put -> put
-    | HttpMethod.Delete -> delete
-    | HttpMethod.Patch -> patch
-
-let endpoints =
-    RouteReflection.allRoutes<Route> ()
-    |> List.map (fun route ->
-        let info = RouteReflection.routeInfo route
-        let handler = routeHandler route
-        toFalcoMethod info.Method info.Path handler)
+// examples/ExampleApp/Program.fs line 298
+let endpoints = RouteReflection.endpoints routeHandler
 ```
 
 ## API Reference
 
 ### Route Attributes
 
+The `[<Route>]` attribute is optional. All union cases are routes by default with conventions:
+
 ```fsharp
-[<Route(RouteMethod.Get, Path = "users/{id}")>]
+// No attribute needed - conventions apply
+| List                        // GET, empty path (collection root)
+| Detail of id: Guid          // GET, path "{id}" (from field)
+| Create                      // POST, empty path
+| Delete of id: Guid          // DELETE, path "{id}"
+| Patch of id: Guid           // PATCH, path "{id}"
+| Health                      // GET, path "health" (kebab-case)
+
+// Explicit attributes override conventions
+| [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: Guid
+| [<Route(RouteMethod.Any, Path = "webhook")>] Webhook
+| [<Route(Path = "v2/status")>] Status
 ```
 
-- `RouteMethod`: Get, Post, Put, Delete, Patch
-- `Path`: URL pattern (use `{param}` for route parameters, `""` for wrapper/grouping cases)
+**Path inference:**
+- Fields like `of id: Guid` → `{id}`
+- Multiple fields `of a: Guid * b: Guid` → `{a}/{b}`
+- No fields → kebab-case from name (`MyRoute` → `my-route`)
+- Special names: `Root`, `List`, `Create`, `Show` → empty path `""`
+
+**Method inference:**
+- `Create` → POST
+- `Delete` → DELETE
+- `Patch` → PATCH
+- All others → GET
+
+**Available methods:** Get, Post, Put, Delete, Patch, Any
 
 ### Route Reflection
 
 ```fsharp
-// Get route metadata
+// Get route metadata (path pattern with {param} placeholders)
 RouteReflection.routeInfo route        // { Method: HttpMethod; Path: string }
 RouteReflection.tryRouteInfo route     // RouteInfo option
 RouteReflection.routeTuple route       // HttpMethod * string
 
+// Type-safe links (substitutes actual values into path)
+RouteReflection.link (Posts (Detail myGuid))  // "/posts/11111111-..."
+
 // Enumerate all routes (parameterized routes get default values)
 RouteReflection.allRoutes<Route>()     // Route list
+
+// Falco integration
+RouteReflection.endpoints routeHandler // HttpEndpoint list (generates all endpoints)
+RouteReflection.toFalcoMethod method   // get/post/put/delete/patch/any function
 
 // Utilities
 RouteReflection.toKebabCase "MyRoute"  // "my-route"
@@ -236,7 +279,7 @@ let deletePost : HttpHandler = fun ctx -> task {
 
 **After (declarative pipelines):**
 ```fsharp
-// examples/ExampleApp/Program.fs lines 140-141
+// examples/ExampleApp/Program.fs lines 289-290
 | Route.Posts(PostRoute.Delete _) ->
     Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.deletePost
 ```
