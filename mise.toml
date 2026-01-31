@@ -35,7 +35,7 @@ depends = ["build"]
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["format-check", "lint", "test"]
+depends = ["format-check", "lint", "test", "docs"]
 
 [tasks.pack]
 description = "Create NuGet package"
