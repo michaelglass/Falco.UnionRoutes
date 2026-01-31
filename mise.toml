@@ -11,8 +11,8 @@ run = "dotnet build"
 depends = ["restore"]
 
 [tasks.test]
-description = "Run tests"
-run = "dotnet test"
+description = "Run tests with coverage"
+run = "dotnet test --collect:\"XPlat Code Coverage\" --results-directory ./coverage"
 depends = ["build"]
 
 [tasks.example]
