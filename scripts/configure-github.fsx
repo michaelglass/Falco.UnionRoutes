@@ -119,20 +119,28 @@ else
     printfn "- Warning: Could not set branch protection (may require admin access)"
     printfn "  Error: %s" error
 
-// Rulesets (newer alternative to branch protection)
-printSection "Checking for required secrets"
+// NuGet Trusted Publishing setup instructions
+printSection "NuGet Trusted Publishing Setup"
+
+let repoOwner = repo.Split('/').[0]
+let repoName = repo.Split('/').[1]
 
 printfn ""
-printfn "The following secrets should be configured manually:"
+printfn "This repository uses NuGet Trusted Publishing (OIDC) - no API keys needed!"
 printfn ""
-printfn "  NUGET_API_KEY - Required for publishing to NuGet.org"
-printfn "                  Get from: https://www.nuget.org/account/apikeys"
+printfn "To enable publishing, configure trusted publishing on NuGet.org:"
 printfn ""
-printfn "To add a secret:"
-printfn "  gh secret set NUGET_API_KEY --repo %s" repo
+printfn "1. Go to: https://www.nuget.org/account/TrustedPublishers"
+printfn "2. Click 'Create' to add a new trusted publisher policy"
+printfn "3. Fill in the details:"
+printfn "   - Policy name: %s" repoName
+printfn "   - Package owner: (your NuGet username or organization)"
+printfn "   - Repository owner: %s" repoOwner
+printfn "   - Repository name: %s" repoName
+printfn "   - Workflow: .github/workflows/release.yml"
 printfn ""
-printfn "To enable NuGet publishing after adding the secret:"
-printfn "  gh variable set PUBLISH_TO_NUGET --repo %s --body \"true\"" repo
+printfn "4. After creating the policy, enable publishing:"
+printfn "   gh variable set PUBLISH_TO_NUGET --repo %s --body \"true\"" repo
 
 // Summary
 printSection "Configuration complete"
@@ -140,7 +148,7 @@ printfn ""
 printfn "Repository: https://github.com/%s" repo
 printfn ""
 printfn "Next steps:"
-printfn "1. Add NUGET_API_KEY secret (when ready to publish)"
+printfn "1. Configure NuGet Trusted Publishing (see above)"
 printfn "2. Set PUBLISH_TO_NUGET=true to enable publishing"
 printfn "3. Run: mise run release patch"
 
