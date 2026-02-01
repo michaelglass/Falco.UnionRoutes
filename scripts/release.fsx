@@ -1,19 +1,21 @@
 #!/usr/bin/env dotnet fsi
 
-/// Release script with semantic versioning enforcement:
+/// Release script with automatic semantic versioning based on API changes:
 /// - MAJOR: removed or changed public APIs (breaking changes)
 /// - MINOR: added public APIs (backward compatible)
 /// - PATCH: no API changes (bug fixes, implementation changes)
 ///
 /// Pre-release progression: alpha → beta → rc → stable
-/// Default bumps the current pre-release stage, or patch if stable.
 
 open System
 open System.Diagnostics
 open System.IO
 open System.Text.RegularExpressions
+open System.Reflection
 
 let fsproj = "src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj"
+let dllPath = "src/Falco.UnionRoutes/bin/Release/net10.0/Falco.UnionRoutes.dll"
+let apiBaselinePath = "api-baseline.txt"
 
 let run (cmd: string) (args: string) =
     let psi = ProcessStartInfo(cmd, args)
@@ -84,33 +86,100 @@ let formatVersion (v: Version) : string =
     | RC n -> sprintf "%s-rc.%d" base' n
     | Stable -> base'
 
-let bumpPreRelease (v: Version) : Version =
+let isPreRelease (v: Version) =
     match v.PreRelease with
-    | Alpha n -> { v with PreRelease = Alpha (n + 1) }
-    | Beta n -> { v with PreRelease = Beta (n + 1) }
-    | RC n -> { v with PreRelease = RC (n + 1) }
-    | Stable -> { v with Patch = v.Patch + 1 }
+    | Stable -> false
+    | _ -> true
 
-let promoteToBeta (v: Version) : Version =
-    { v with PreRelease = Beta 1 }
+// API extraction and comparison
+let getPublicApi (dllPath: string) : string list =
+    try
+        let assembly = Assembly.LoadFrom(dllPath)
+        assembly.GetExportedTypes()
+        |> Array.collect (fun t ->
+            let typeName = t.FullName
+            let members =
+                t.GetMembers(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
+                |> Array.filter (fun m ->
+                    match m.MemberType with
+                    | MemberTypes.Constructor | MemberTypes.Method | MemberTypes.Property | MemberTypes.Field -> true
+                    | _ -> false)
+                |> Array.map (fun m ->
+                    let memberSig =
+                        match m with
+                        | :? System.Reflection.MethodInfo as mi ->
+                            let params' = mi.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
+                            sprintf "%s(%s): %s" mi.Name params' mi.ReturnType.Name
+                        | :? System.Reflection.PropertyInfo as pi ->
+                            sprintf "%s: %s" pi.Name pi.PropertyType.Name
+                        | :? System.Reflection.FieldInfo as fi ->
+                            sprintf "%s: %s" fi.Name fi.FieldType.Name
+                        | :? System.Reflection.ConstructorInfo as ci ->
+                            let params' = ci.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
+                            sprintf ".ctor(%s)" params'
+                        | _ -> m.Name
+                    sprintf "  %s" memberSig)
+            [| sprintf "type %s" typeName |] |> Array.append members)
+        |> Array.toList
+        |> List.sort
+    with ex ->
+        eprintfn "Warning: Could not load assembly for API comparison: %s" ex.Message
+        []
 
-let promoteToRC (v: Version) : Version =
-    { v with PreRelease = RC 1 }
+type ApiChange =
+    | Breaking of removed: string list * changed: string list
+    | Addition of added: string list
+    | NoChange
 
-let promoteToStable (v: Version) : Version =
-    { v with PreRelease = Stable }
+let compareApis (baseline: string list) (current: string list) : ApiChange =
+    let baselineSet = Set.ofList baseline
+    let currentSet = Set.ofList current
 
-let bumpPatch (v: Version) : Version =
-    { v with Patch = v.Patch + 1; PreRelease = Stable }
+    let removed = Set.difference baselineSet currentSet |> Set.toList
+    let added = Set.difference currentSet baselineSet |> Set.toList
 
-let bumpMinor (v: Version) : Version =
-    { v with Minor = v.Minor + 1; Patch = 0; PreRelease = Stable }
+    if not (List.isEmpty removed) then
+        Breaking(removed, [])
+    elif not (List.isEmpty added) then
+        Addition(added)
+    else
+        NoChange
 
-let bumpMajor (v: Version) : Version =
-    { Major = v.Major + 1; Minor = 0; Patch = 0; PreRelease = Stable }
+let loadBaseline () : string list =
+    if File.Exists(apiBaselinePath) then
+        File.ReadAllLines(apiBaselinePath) |> Array.toList
+    else
+        []
 
-let startAlpha (v: Version) : Version =
-    { v with Minor = v.Minor + 1; Patch = 0; PreRelease = Alpha 1 }
+let saveBaseline (api: string list) =
+    File.WriteAllLines(apiBaselinePath, api)
+
+// Version bumping based on API changes
+let determineVersionBump (current: Version) (apiChange: ApiChange) : Version * string =
+    match current.PreRelease with
+    | Alpha n ->
+        // In alpha, just bump alpha number regardless of changes
+        { current with PreRelease = Alpha(n + 1) }, "alpha (API changes allowed in alpha)"
+    | Beta n ->
+        // In beta, breaking changes bump to next beta, additions are ok
+        match apiChange with
+        | Breaking _ -> { current with PreRelease = Beta(n + 1) }, "beta (breaking change)"
+        | Addition _ -> { current with PreRelease = Beta(n + 1) }, "beta (new API)"
+        | NoChange -> { current with PreRelease = Beta(n + 1) }, "beta"
+    | RC n ->
+        // In RC, any API change goes back to beta
+        match apiChange with
+        | Breaking _ -> { current with PreRelease = Beta 1 }, "back to beta (breaking change in RC)"
+        | Addition _ -> { current with PreRelease = Beta 1 }, "back to beta (new API in RC)"
+        | NoChange -> { current with PreRelease = RC(n + 1) }, "rc"
+    | Stable ->
+        match apiChange with
+        | Breaking _ ->
+            { Major = current.Major + 1; Minor = 0; Patch = 0; PreRelease = Stable }, "MAJOR (breaking API change)"
+        | Addition _ ->
+            { current with Minor = current.Minor + 1; Patch = 0 }, "MINOR (new API)"
+        | NoChange ->
+            { current with Patch = current.Patch + 1 }, "PATCH (no API changes)"
 
 let hasUncommittedChanges () =
     let (code1, _, _) = run "git" "diff --quiet"
@@ -136,27 +205,22 @@ let promptYesNo message =
 let showHelp () =
     printfn "Usage: mise run release [command]"
     printfn ""
-    printfn "Semantic Versioning Rules:"
-    printfn "  MAJOR  - breaking changes (removed/changed public APIs)"
-    printfn "  MINOR  - new features (added public APIs, backward compatible)"
-    printfn "  PATCH  - bug fixes (no API changes)"
+    printfn "Automatic versioning based on API changes:"
+    printfn "  - Detects added/removed/changed public APIs"
+    printfn "  - MAJOR bump for breaking changes (stable only)"
+    printfn "  - MINOR bump for new APIs (stable only)"
+    printfn "  - PATCH bump for no API changes (stable only)"
+    printfn "  - Pre-release versions bump within their stage"
     printfn ""
     printfn "Commands:"
-    printfn "  (none)    - bump current pre-release, or patch if stable"
-    printfn "  alpha     - start new alpha cycle (bumps minor)"
-    printfn "  beta      - promote to beta"
-    printfn "  rc        - promote to release candidate"
-    printfn "  stable    - promote to stable release"
-    printfn "  patch     - bump patch version (bug fix, no API changes)"
-    printfn "  minor     - bump minor version (added APIs)"
-    printfn "  major     - bump major version (breaking changes)"
+    printfn "  (none)    - auto-detect API changes and bump accordingly"
+    printfn "  alpha     - start new alpha cycle for next minor version"
+    printfn "  beta      - promote current version to beta"
+    printfn "  rc        - promote current version to release candidate"
+    printfn "  stable    - promote current version to stable"
+    printfn "  init      - initialize API baseline from current build"
     printfn ""
-    printfn "Examples:"
-    printfn "  mise run release           # 0.1.0-alpha.1 → 0.1.0-alpha.2"
-    printfn "  mise run release beta      # 0.1.0-alpha.3 → 0.1.0-beta.1"
-    printfn "  mise run release stable    # 0.1.0-rc.1 → 0.1.0"
-    printfn "  mise run release           # 0.1.0 → 0.1.1 (patch)"
-    printfn "  mise run release alpha     # 0.1.1 → 0.2.0-alpha.1"
+    printfn "The API baseline is stored in %s" apiBaselinePath
 
 [<EntryPoint>]
 let main argv =
@@ -164,6 +228,18 @@ let main argv =
 
     if cmd = "--help" || cmd = "-h" then
         showHelp ()
+        exit 0
+
+    // Build in Release mode to get the DLL
+    printfn "Building in Release mode..."
+    runOrFail "dotnet" "build -c Release" |> ignore
+
+    if cmd = "init" then
+        printfn "Initializing API baseline..."
+        let api = getPublicApi (Path.GetFullPath dllPath)
+        saveBaseline api
+        printfn "Saved %d API entries to %s" api.Length apiBaselinePath
+        printfn "Commit this file to track API changes."
         exit 0
 
     // Get current version
@@ -177,17 +253,45 @@ let main argv =
     let currentVersionStr = formatVersion currentVersion
     printfn "Current version: %s" currentVersionStr
 
-    // Calculate new version
-    let newVersion =
+    // Handle explicit promotion commands
+    let newVersion, reason =
         match cmd with
-        | "" -> bumpPreRelease currentVersion
-        | "alpha" -> startAlpha currentVersion
-        | "beta" -> promoteToBeta currentVersion
-        | "rc" -> promoteToRC currentVersion
-        | "stable" -> promoteToStable currentVersion
-        | "patch" -> bumpPatch currentVersion
-        | "minor" -> bumpMinor currentVersion
-        | "major" -> bumpMajor currentVersion
+        | "alpha" ->
+            { currentVersion with Minor = currentVersion.Minor + 1; Patch = 0; PreRelease = Alpha 1 },
+            "starting new alpha cycle"
+        | "beta" ->
+            { currentVersion with PreRelease = Beta 1 }, "promoting to beta"
+        | "rc" ->
+            { currentVersion with PreRelease = RC 1 }, "promoting to release candidate"
+        | "stable" ->
+            { currentVersion with PreRelease = Stable }, "promoting to stable"
+        | "" ->
+            // Auto-detect based on API changes
+            let baseline = loadBaseline ()
+            let currentApi = getPublicApi (Path.GetFullPath dllPath)
+
+            if baseline.IsEmpty then
+                printfn ""
+                printfn "No API baseline found. Run 'mise run release init' first,"
+                printfn "or use 'mise run release alpha' to start the first release."
+                exit 1
+
+            let apiChange = compareApis baseline currentApi
+
+            match apiChange with
+            | Breaking(removed, _) ->
+                printfn ""
+                printfn "Detected BREAKING API changes:"
+                removed |> List.iter (printfn "  - %s")
+            | Addition added ->
+                printfn ""
+                printfn "Detected new APIs:"
+                added |> List.iter (printfn "  + %s")
+            | NoChange ->
+                printfn ""
+                printfn "No API changes detected."
+
+            determineVersionBump currentVersion apiChange
         | _ ->
             eprintfn "Unknown command: %s" cmd
             eprintfn "Run with --help for usage"
@@ -196,23 +300,16 @@ let main argv =
     let newVersionStr = formatVersion newVersion
     let newTag = sprintf "v%s" newVersionStr
 
+    printfn ""
+    printfn "Version bump: %s" reason
     printfn "New version: %s" newVersionStr
     printfn "New tag: %s" newTag
 
-    // Show semver reminder for major/minor
-    match cmd with
-    | "major" ->
-        printfn ""
-        printfn "MAJOR version bump - ensure this includes breaking API changes"
-    | "minor" ->
-        printfn ""
-        printfn "MINOR version bump - ensure this adds new public APIs"
-    | "patch" ->
-        printfn ""
-        printfn "PATCH version bump - ensure no public API changes"
-    | _ -> ()
+    if not (promptYesNo "Continue?") then
+        printfn "Aborted."
+        exit 0
 
-    // Check for uncommitted changes
+    // Check for uncommitted changes (except the ones we're about to make)
     if hasUncommittedChanges () then
         eprintfn "Error: You have uncommitted changes. Please commit or stash them first."
         exit 1
@@ -222,14 +319,19 @@ let main argv =
         eprintfn "Error: Tag %s already exists" newTag
         exit 1
 
+    // Update API baseline
+    let currentApi = getPublicApi (Path.GetFullPath dllPath)
+    saveBaseline currentApi
+    printfn "Updated API baseline"
+
     // Update version in .fsproj
     updateVersionInFsproj newVersionStr
     printfn "Updated %s to version %s" fsproj newVersionStr
 
     // Commit the version bump
-    runOrFail "git" (sprintf "add %s" fsproj) |> ignore
-    runOrFail "git" (sprintf "commit -m \"Bump version to %s\"" newVersionStr) |> ignore
-    printfn "Committed version bump"
+    runOrFail "git" (sprintf "add %s %s" fsproj apiBaselinePath) |> ignore
+    runOrFail "git" (sprintf "commit -m \"Release %s\"" newVersionStr) |> ignore
+    printfn "Committed release"
 
     // Create tag
     runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" newTag newVersionStr) |> ignore
