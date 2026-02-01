@@ -259,6 +259,46 @@ requireSome error optionValue            // Result<'T, 'E>
 requireSomeWith errorFn optionValue      // Result<'T, 'E>
 ```
 
+### TypedRoutes Builder (Servant-inspired)
+
+For additional compile-time safety, use the builder-based `TypedRoutes` API. The pattern function's return type constrains the handler's parameter type - if they don't match, you get a compile error.
+
+```fsharp
+// Pattern returns Guid option, so handler MUST accept Guid
+let postHandler: PostRoute -> HttpHandler =
+    typed<PostRoute, AppError> toErrorResponse
+    // Unit route - no parameters
+    |> route0 (function List -> true | _ -> false) listHandler
+    // Guid route - pattern return type constrains handler
+    |> routeGuid
+        (function Detail id -> Some id | _ -> None)  // Returns Guid option
+        "id"                                          // Route param name
+        (BadRequest "Invalid ID")                     // Error for invalid GUID
+        (fun id -> getPost (PostId id))              // Handler MUST accept Guid
+    // Guid + pipeline - combines route param with additional extraction (e.g., auth)
+    |> routeGuidWith
+        (function Delete id -> Some id | _ -> None)
+        "id"
+        (BadRequest "Invalid ID")
+        requireAuth                                   // Pipeline<UserId, AppError>
+        (fun (userId, id) -> deletePost userId id)   // Handler gets (UserId * Guid)
+    |> build
+```
+
+**Type Safety Guarantees:**
+- If pattern returns `Guid option`, handler must accept `Guid`
+- If pattern returns `string option`, handler must accept `string`
+- Mismatched types produce compile errors, not runtime errors
+
+Available builders:
+```fsharp
+route0 pattern handler           // No parameters
+routeGuid pattern name error handler      // Guid parameter
+routeGuidWith pattern name error pipeline handler  // Guid + pipeline
+routeString pattern name error handler    // String parameter
+routeInt pattern name error handler       // Int parameter
+```
+
 ## Why Use This?
 
 **Before (manual validation in each handler):**
