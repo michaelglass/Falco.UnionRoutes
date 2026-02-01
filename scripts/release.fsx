@@ -34,7 +34,9 @@ let getLatestTag () =
         ""
 
 let parseVersion (version: string) =
-    let parts = version.TrimStart('v').Split('.')
+    // Strip prerelease suffix for parsing base version
+    let baseVersion = version.TrimStart('v').Split('-').[0]
+    let parts = baseVersion.Split('.')
     if parts.Length >= 3 then
         (int parts.[0], int parts.[1], int parts.[2])
     else
@@ -42,14 +44,21 @@ let parseVersion (version: string) =
 
 let bumpVersion (major, minor, patch) bumpType =
     match bumpType with
-    | "major" -> (major + 1, 0, 0)
-    | "minor" -> (major, minor + 1, 0)
-    | "patch" -> (major, minor, patch + 1)
-    | _ -> failwith "Invalid bump type. Use: patch, minor, or major"
+    | "major" -> (major + 1, 0, 0), None
+    | "minor" -> (major, minor + 1, 0), None
+    | "patch" -> (major, minor, patch + 1), None
+    | "alpha" -> (major, minor, patch), Some "alpha"
+    | "beta" -> (major, minor, patch), Some "beta"
+    | "rc" -> (major, minor, patch), Some "rc"
+    | _ -> failwith "Invalid bump type"
+
+let isExplicitVersion (s: string) =
+    // Check if it looks like a version (starts with digit or has dots)
+    Regex.IsMatch(s, @"^\d+\.\d+")
 
 let hasUncommittedChanges () =
-    let (code1, diff1, _) = run "git" "diff --quiet"
-    let (code2, diff2, _) = run "git" "diff --cached --quiet"
+    let (code1, _, _) = run "git" "diff --quiet"
+    let (code2, _, _) = run "git" "diff --cached --quiet"
     code1 <> 0 || code2 <> 0
 
 let tagExists tag =
@@ -68,18 +77,31 @@ let promptYesNo message =
     let response = Console.ReadLine()
     response.ToLower() = "y"
 
+let showHelp () =
+    printfn "Usage: dotnet fsi scripts/release.fsx <version>"
+    printfn ""
+    printfn "Version can be:"
+    printfn "  patch         - bump patch version (0.1.0 -> 0.1.1)"
+    printfn "  minor         - bump minor version (0.1.0 -> 0.2.0)"
+    printfn "  major         - bump major version (0.1.0 -> 1.0.0)"
+    printfn "  alpha         - add alpha suffix (0.1.0 -> 0.1.0-alpha)"
+    printfn "  beta          - add beta suffix (0.1.0 -> 0.1.0-beta)"
+    printfn "  rc            - add rc suffix (0.1.0 -> 0.1.0-rc)"
+    printfn "  <explicit>    - use explicit version (e.g., 0.1.0-alpha.1)"
+    printfn ""
+    printfn "Examples:"
+    printfn "  mise run release 0.1.0-alpha    # first alpha release"
+    printfn "  mise run release patch          # 0.1.0-alpha -> 0.1.1"
+    printfn "  mise run release 1.0.0          # explicit stable release"
+
 [<EntryPoint>]
 let main argv =
-    let bumpType =
+    let arg =
         if argv.Length > 0 then argv.[0]
         else "patch"
 
-    if bumpType = "--help" || bumpType = "-h" then
-        printfn "Usage: dotnet fsi scripts/release.fsx [patch|minor|major]"
-        printfn ""
-        printfn "  patch - bump patch version (0.1.0 -> 0.1.1)"
-        printfn "  minor - bump minor version (0.1.0 -> 0.2.0)"
-        printfn "  major - bump major version (0.1.0 -> 1.0.0)"
+    if arg = "--help" || arg = "-h" then
+        showHelp ()
         exit 0
 
     // Get current version
@@ -91,9 +113,18 @@ let main argv =
     printfn "Current version: %s" currentVersion
 
     // Calculate new version
-    let (major, minor, patch) = parseVersion currentVersion
-    let (newMajor, newMinor, newPatch) = bumpVersion (major, minor, patch) bumpType
-    let newVersion = sprintf "%d.%d.%d" newMajor newMinor newPatch
+    let newVersion =
+        if isExplicitVersion arg then
+            // Explicit version provided
+            arg
+        else
+            // Bump type provided
+            let (major, minor, patch) = parseVersion currentVersion
+            let ((newMajor, newMinor, newPatch), suffix) = bumpVersion (major, minor, patch) arg
+            match suffix with
+            | Some s -> sprintf "%d.%d.%d-%s" newMajor newMinor newPatch s
+            | None -> sprintf "%d.%d.%d" newMajor newMinor newPatch
+
     let newTag = sprintf "v%s" newVersion
 
     printfn "New version: %s" newVersion
