@@ -20,6 +20,11 @@ description = "Run the example app"
 run = "dotnet run --project examples/ExampleApp"
 depends = ["build"]
 
+[tasks.example-build]
+description = "Build the example app (for CI)"
+run = "dotnet build examples/ExampleApp --warnaserror"
+depends = ["build"]
+
 [tasks.format]
 description = "Format code with Fantomas"
 run = "dotnet fantomas src/ tests/ examples/"
@@ -40,7 +45,7 @@ depends = ["test"]
 
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["format-check", "lint", "coverage-check", "docs"]
+depends = ["format-check", "lint", "coverage-check", "docs", "example-build"]
 
 [tasks.pack]
 description = "Create NuGet package"
