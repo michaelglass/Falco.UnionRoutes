@@ -6,6 +6,8 @@
 /// - PATCH: no API changes (bug fixes, implementation changes)
 ///
 /// Pre-release progression: alpha → beta → rc → stable
+///
+/// API baseline is automatically extracted from the previous release tag.
 
 open System
 open System.Diagnostics
@@ -14,8 +16,7 @@ open System.Text.RegularExpressions
 open System.Reflection
 
 let fsproj = "src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj"
-let dllPath = "src/Falco.UnionRoutes/bin/Release/net10.0/Falco.UnionRoutes.dll"
-let apiBaselinePath = "api-baseline.txt"
+let dllRelativePath = "src/Falco.UnionRoutes/bin/Release/net10.0/Falco.UnionRoutes.dll"
 
 let run (cmd: string) (args: string) =
     let psi = ProcessStartInfo(cmd, args)
@@ -36,12 +37,16 @@ let runOrFail cmd args =
         exit 1
     output
 
+let runSilent cmd args =
+    let (code, output, _) = run cmd args
+    if code = 0 then Some output else None
+
 let getLatestTag () =
     let (code, output, _) = run "git" "tag -l v* --sort=-v:refname"
     if code = 0 && output <> "" then
-        output.Split('\n').[0]
+        Some (output.Split('\n').[0])
     else
-        ""
+        None
 
 type PreRelease =
     | Alpha of int
@@ -86,14 +91,10 @@ let formatVersion (v: Version) : string =
     | RC n -> sprintf "%s-rc.%d" base' n
     | Stable -> base'
 
-let isPreRelease (v: Version) =
-    match v.PreRelease with
-    | Stable -> false
-    | _ -> true
-
-// API extraction and comparison
+// API extraction via reflection
 let getPublicApi (dllPath: string) : string list =
     try
+        // Load assembly in reflection-only context to avoid locking
         let assembly = Assembly.LoadFrom(dllPath)
         assembly.GetExportedTypes()
         |> Array.collect (fun t ->
@@ -107,27 +108,61 @@ let getPublicApi (dllPath: string) : string list =
                 |> Array.map (fun m ->
                     let memberSig =
                         match m with
-                        | :? System.Reflection.MethodInfo as mi ->
+                        | :? MethodInfo as mi when not (mi.IsSpecialName) ->
                             let params' = mi.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
-                            sprintf "%s(%s): %s" mi.Name params' mi.ReturnType.Name
-                        | :? System.Reflection.PropertyInfo as pi ->
-                            sprintf "%s: %s" pi.Name pi.PropertyType.Name
-                        | :? System.Reflection.FieldInfo as fi ->
-                            sprintf "%s: %s" fi.Name fi.FieldType.Name
-                        | :? System.Reflection.ConstructorInfo as ci ->
+                            Some (sprintf "  %s(%s): %s" mi.Name params' mi.ReturnType.Name)
+                        | :? PropertyInfo as pi ->
+                            Some (sprintf "  %s: %s" pi.Name pi.PropertyType.Name)
+                        | :? FieldInfo as fi when fi.IsPublic ->
+                            Some (sprintf "  %s: %s" fi.Name fi.FieldType.Name)
+                        | :? ConstructorInfo as ci ->
                             let params' = ci.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
-                            sprintf ".ctor(%s)" params'
-                        | _ -> m.Name
-                    sprintf "  %s" memberSig)
-            [| sprintf "type %s" typeName |] |> Array.append members)
+                            Some (sprintf "  .ctor(%s)" params')
+                        | _ -> None
+                    memberSig)
+                |> Array.choose id
+            Array.append [| sprintf "type %s" typeName |] members)
         |> Array.toList
         |> List.sort
     with ex ->
-        eprintfn "Warning: Could not load assembly for API comparison: %s" ex.Message
+        eprintfn "Warning: Could not load assembly: %s" ex.Message
+        []
+
+// Get API from a specific git tag by checking it out temporarily
+let getApiFromTag (tag: string) : string list =
+    let currentBranch = runOrFail "git" "rev-parse --abbrev-ref HEAD"
+    let currentCommit = runOrFail "git" "rev-parse HEAD"
+
+    try
+        // Stash any changes (shouldn't be any, but just in case)
+        let _ = runSilent "git" "stash"
+
+        // Checkout the tag
+        printfn "  Checking out %s..." tag
+        runOrFail "git" (sprintf "checkout %s --quiet" tag) |> ignore
+
+        // Build at that tag
+        printfn "  Building at %s..." tag
+        runOrFail "dotnet" "build -c Release --verbosity quiet" |> ignore
+
+        // Extract API
+        let api = getPublicApi (Path.GetFullPath dllRelativePath)
+
+        // Return to original state
+        printfn "  Returning to current state..."
+        runOrFail "git" (sprintf "checkout %s --quiet" currentCommit) |> ignore
+        let _ = runSilent "git" "stash pop"
+
+        api
+    with ex ->
+        // Try to recover
+        let _ = runSilent "git" (sprintf "checkout %s --quiet" currentCommit)
+        let _ = runSilent "git" "stash pop"
+        eprintfn "Error getting API from tag: %s" ex.Message
         []
 
 type ApiChange =
-    | Breaking of removed: string list * changed: string list
+    | Breaking of removed: string list
     | Addition of added: string list
     | NoChange
 
@@ -139,43 +174,28 @@ let compareApis (baseline: string list) (current: string list) : ApiChange =
     let added = Set.difference currentSet baselineSet |> Set.toList
 
     if not (List.isEmpty removed) then
-        Breaking(removed, [])
+        Breaking removed
     elif not (List.isEmpty added) then
-        Addition(added)
+        Addition added
     else
         NoChange
-
-let loadBaseline () : string list =
-    if File.Exists(apiBaselinePath) then
-        File.ReadAllLines(apiBaselinePath) |> Array.toList
-    else
-        []
-
-let saveBaseline (api: string list) =
-    File.WriteAllLines(apiBaselinePath, api)
 
 // Version bumping based on API changes
 let determineVersionBump (current: Version) (apiChange: ApiChange) : Version * string =
     match current.PreRelease with
     | Alpha n ->
-        // In alpha, just bump alpha number regardless of changes
-        { current with PreRelease = Alpha(n + 1) }, "alpha (API changes allowed in alpha)"
+        { current with PreRelease = Alpha(n + 1) }, "alpha (API changes allowed)"
     | Beta n ->
-        // In beta, breaking changes bump to next beta, additions are ok
-        match apiChange with
-        | Breaking _ -> { current with PreRelease = Beta(n + 1) }, "beta (breaking change)"
-        | Addition _ -> { current with PreRelease = Beta(n + 1) }, "beta (new API)"
-        | NoChange -> { current with PreRelease = Beta(n + 1) }, "beta"
+        { current with PreRelease = Beta(n + 1) }, "beta"
     | RC n ->
-        // In RC, any API change goes back to beta
         match apiChange with
-        | Breaking _ -> { current with PreRelease = Beta 1 }, "back to beta (breaking change in RC)"
+        | Breaking _ -> { current with PreRelease = Beta 1 }, "back to beta (breaking change in RC!)"
         | Addition _ -> { current with PreRelease = Beta 1 }, "back to beta (new API in RC)"
         | NoChange -> { current with PreRelease = RC(n + 1) }, "rc"
     | Stable ->
         match apiChange with
         | Breaking _ ->
-            { Major = current.Major + 1; Minor = 0; Patch = 0; PreRelease = Stable }, "MAJOR (breaking API change)"
+            { Major = current.Major + 1; Minor = 0; Patch = 0; PreRelease = Stable }, "MAJOR (breaking change)"
         | Addition _ ->
             { current with Minor = current.Minor + 1; Patch = 0 }, "MINOR (new API)"
         | NoChange ->
@@ -206,7 +226,7 @@ let showHelp () =
     printfn "Usage: mise run release [command]"
     printfn ""
     printfn "Automatic versioning based on API changes:"
-    printfn "  - Detects added/removed/changed public APIs"
+    printfn "  - Compares current API against the previous release tag"
     printfn "  - MAJOR bump for breaking changes (stable only)"
     printfn "  - MINOR bump for new APIs (stable only)"
     printfn "  - PATCH bump for no API changes (stable only)"
@@ -214,13 +234,10 @@ let showHelp () =
     printfn ""
     printfn "Commands:"
     printfn "  (none)    - auto-detect API changes and bump accordingly"
-    printfn "  alpha     - start new alpha cycle for next minor version"
-    printfn "  beta      - promote current version to beta"
-    printfn "  rc        - promote current version to release candidate"
-    printfn "  stable    - promote current version to stable"
-    printfn "  init      - initialize API baseline from current build"
-    printfn ""
-    printfn "The API baseline is stored in %s" apiBaselinePath
+    printfn "  alpha     - start first alpha (0.1.0-alpha.1) or new cycle"
+    printfn "  beta      - promote to beta"
+    printfn "  rc        - promote to release candidate"
+    printfn "  stable    - promote to stable"
 
 [<EntryPoint>]
 let main argv =
@@ -230,35 +247,38 @@ let main argv =
         showHelp ()
         exit 0
 
-    // Build in Release mode to get the DLL
-    printfn "Building in Release mode..."
-    runOrFail "dotnet" "build -c Release" |> ignore
+    // Check for uncommitted changes first
+    if hasUncommittedChanges () then
+        eprintfn "Error: You have uncommitted changes. Please commit or stash them first."
+        exit 1
 
-    if cmd = "init" then
-        printfn "Initializing API baseline..."
-        let api = getPublicApi (Path.GetFullPath dllPath)
-        saveBaseline api
-        printfn "Saved %d API entries to %s" api.Length apiBaselinePath
-        printfn "Commit this file to track API changes."
-        exit 0
-
-    // Get current version
+    // Get current version from latest tag
     let latestTag = getLatestTag ()
     let currentVersion =
-        if String.IsNullOrEmpty(latestTag) then
-            { Major = 0; Minor = 0; Patch = 0; PreRelease = Stable }
-        else
-            parseVersion latestTag
+        match latestTag with
+        | Some tag -> parseVersion tag
+        | None -> { Major = 0; Minor = 0; Patch = 0; PreRelease = Stable }
 
     let currentVersionStr = formatVersion currentVersion
-    printfn "Current version: %s" currentVersionStr
+    printfn "Current version: %s" (if latestTag.IsSome then currentVersionStr else "(none)")
 
-    // Handle explicit promotion commands
+    // Build current version
+    printfn "Building current version..."
+    runOrFail "dotnet" "build -c Release --verbosity quiet" |> ignore
+    let currentApi = getPublicApi (Path.GetFullPath dllRelativePath)
+
+    // Handle commands
     let newVersion, reason =
         match cmd with
         | "alpha" ->
-            { currentVersion with Minor = currentVersion.Minor + 1; Patch = 0; PreRelease = Alpha 1 },
-            "starting new alpha cycle"
+            match latestTag with
+            | None ->
+                // First release ever
+                { Major = 0; Minor = 1; Patch = 0; PreRelease = Alpha 1 }, "first alpha release"
+            | Some _ ->
+                // Start new alpha cycle
+                { currentVersion with Minor = currentVersion.Minor + 1; Patch = 0; PreRelease = Alpha 1 },
+                "starting new alpha cycle"
         | "beta" ->
             { currentVersion with PreRelease = Beta 1 }, "promoting to beta"
         | "rc" ->
@@ -266,32 +286,41 @@ let main argv =
         | "stable" ->
             { currentVersion with PreRelease = Stable }, "promoting to stable"
         | "" ->
-            // Auto-detect based on API changes
-            let baseline = loadBaseline ()
-            let currentApi = getPublicApi (Path.GetFullPath dllPath)
-
-            if baseline.IsEmpty then
+            match latestTag with
+            | None ->
+                // No previous release - start with alpha
                 printfn ""
-                printfn "No API baseline found. Run 'mise run release init' first,"
-                printfn "or use 'mise run release alpha' to start the first release."
-                exit 1
-
-            let apiChange = compareApis baseline currentApi
-
-            match apiChange with
-            | Breaking(removed, _) ->
+                printfn "No previous releases found. Use 'mise run release alpha' for first release."
+                exit 0
+            | Some tag ->
+                // Get API from previous release
                 printfn ""
-                printfn "Detected BREAKING API changes:"
-                removed |> List.iter (printfn "  - %s")
-            | Addition added ->
-                printfn ""
-                printfn "Detected new APIs:"
-                added |> List.iter (printfn "  + %s")
-            | NoChange ->
-                printfn ""
-                printfn "No API changes detected."
+                printfn "Getting API baseline from %s..." tag
+                let baselineApi = getApiFromTag tag
 
-            determineVersionBump currentVersion apiChange
+                if baselineApi.IsEmpty then
+                    printfn "Warning: Could not extract API from previous release."
+                    printfn "Proceeding with pre-release bump..."
+                    determineVersionBump currentVersion NoChange
+                else
+                    let apiChange = compareApis baselineApi currentApi
+
+                    match apiChange with
+                    | Breaking removed ->
+                        printfn ""
+                        printfn "BREAKING API changes detected:"
+                        removed |> List.take (min 10 removed.Length) |> List.iter (printfn "  - %s")
+                        if removed.Length > 10 then printfn "  ... and %d more" (removed.Length - 10)
+                    | Addition added ->
+                        printfn ""
+                        printfn "New APIs detected:"
+                        added |> List.take (min 10 added.Length) |> List.iter (printfn "  + %s")
+                        if added.Length > 10 then printfn "  ... and %d more" (added.Length - 10)
+                    | NoChange ->
+                        printfn ""
+                        printfn "No API changes detected."
+
+                    determineVersionBump currentVersion apiChange
         | _ ->
             eprintfn "Unknown command: %s" cmd
             eprintfn "Run with --help for usage"
@@ -303,55 +332,36 @@ let main argv =
     printfn ""
     printfn "Version bump: %s" reason
     printfn "New version: %s" newVersionStr
-    printfn "New tag: %s" newTag
-
-    if not (promptYesNo "Continue?") then
-        printfn "Aborted."
-        exit 0
-
-    // Check for uncommitted changes (except the ones we're about to make)
-    if hasUncommittedChanges () then
-        eprintfn "Error: You have uncommitted changes. Please commit or stash them first."
-        exit 1
 
     // Check if tag exists
     if tagExists newTag then
         eprintfn "Error: Tag %s already exists" newTag
         exit 1
 
-    // Update API baseline
-    let currentApi = getPublicApi (Path.GetFullPath dllPath)
-    saveBaseline currentApi
-    printfn "Updated API baseline"
+    if not (promptYesNo "Continue?") then
+        printfn "Aborted."
+        exit 0
 
     // Update version in .fsproj
     updateVersionInFsproj newVersionStr
-    printfn "Updated %s to version %s" fsproj newVersionStr
+    printfn "Updated %s" fsproj
 
-    // Commit the version bump
-    runOrFail "git" (sprintf "add %s %s" fsproj apiBaselinePath) |> ignore
+    // Commit and tag
+    runOrFail "git" (sprintf "add %s" fsproj) |> ignore
     runOrFail "git" (sprintf "commit -m \"Release %s\"" newVersionStr) |> ignore
-    printfn "Committed release"
-
-    // Create tag
     runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" newTag newVersionStr) |> ignore
-    printfn "Created tag %s" newTag
+    printfn "Created commit and tag %s" newTag
 
-    // Prompt to push
+    // Push
     printfn ""
-    printfn "Ready to push. This will trigger the release workflow."
-
-    if promptYesNo "Push to origin?" then
+    if promptYesNo "Push to trigger release?" then
         runOrFail "git" "push origin HEAD" |> ignore
         runOrFail "git" (sprintf "push origin %s" newTag) |> ignore
         printfn ""
-        printfn "Pushed! Release workflow will run at:"
-        printfn "https://github.com/michaelglass/Falco.UnionRoutes/actions"
+        printfn "Pushed! Release workflow: https://github.com/michaelglass/Falco.UnionRoutes/actions"
     else
         printfn ""
-        printfn "Not pushed. To push manually:"
-        printfn "  git push origin HEAD"
-        printfn "  git push origin %s" newTag
+        printfn "To push manually: git push origin HEAD && git push origin %s" newTag
 
     0
 
