@@ -56,7 +56,3 @@ depends = ["build"]
 description = "Create and push a release tag (args: patch|minor|major)"
 run = "dotnet fsi scripts/release.fsx ${1:-patch}"
 depends = ["ci"]
-
-[tasks.configure-github]
-description = "Configure GitHub repository settings via API"
-run = "dotnet fsi scripts/configure-github.fsx"
