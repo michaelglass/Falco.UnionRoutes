@@ -45,10 +45,11 @@ let ``toKebabCase handles single word`` () =
     Assert.Equal("profile", RouteReflection.toKebabCase "Profile")
 
 [<Fact>]
-let ``toKebabCase handles consecutive capitals as single block`` () =
-    // Consecutive capitals stay together (standard behavior)
-    Assert.Equal("htmlparser", RouteReflection.toKebabCase "HTMLParser")
-    Assert.Equal("urlhandler", RouteReflection.toKebabCase "URLHandler")
+let ``toKebabCase handles consecutive capitals correctly`` () =
+    // Consecutive capitals get split before final lowercase transition
+    Assert.Equal("html-parser", RouteReflection.toKebabCase "HTMLParser")
+    Assert.Equal("url-handler", RouteReflection.toKebabCase "URLHandler")
+    Assert.Equal("get-api-data", RouteReflection.toKebabCase "GetAPIData")
 
 // =============================================================================
 // Simple route tests
