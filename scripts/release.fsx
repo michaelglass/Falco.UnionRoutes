@@ -1,5 +1,13 @@
 #!/usr/bin/env dotnet fsi
 
+/// Release script with semantic versioning enforcement:
+/// - MAJOR: removed or changed public APIs (breaking changes)
+/// - MINOR: added public APIs (backward compatible)
+/// - PATCH: no API changes (bug fixes, implementation changes)
+///
+/// Pre-release progression: alpha → beta → rc → stable
+/// Default bumps the current pre-release stage, or patch if stable.
+
 open System
 open System.Diagnostics
 open System.IO
@@ -33,28 +41,76 @@ let getLatestTag () =
     else
         ""
 
-let parseVersion (version: string) =
-    // Strip prerelease suffix for parsing base version
-    let baseVersion = version.TrimStart('v').Split('-').[0]
-    let parts = baseVersion.Split('.')
-    if parts.Length >= 3 then
-        (int parts.[0], int parts.[1], int parts.[2])
-    else
-        (0, 0, 0)
+type PreRelease =
+    | Alpha of int
+    | Beta of int
+    | RC of int
+    | Stable
 
-let bumpVersion (major, minor, patch) bumpType =
-    match bumpType with
-    | "major" -> (major + 1, 0, 0), None
-    | "minor" -> (major, minor + 1, 0), None
-    | "patch" -> (major, minor, patch + 1), None
-    | "alpha" -> (major, minor, patch), Some "alpha"
-    | "beta" -> (major, minor, patch), Some "beta"
-    | "rc" -> (major, minor, patch), Some "rc"
-    | _ -> failwith "Invalid bump type"
+type Version = {
+    Major: int
+    Minor: int
+    Patch: int
+    PreRelease: PreRelease
+}
 
-let isExplicitVersion (s: string) =
-    // Check if it looks like a version (starts with digit or has dots)
-    Regex.IsMatch(s, @"^\d+\.\d+")
+let parseVersion (version: string) : Version =
+    let v = version.TrimStart('v')
+    let parts = v.Split('-')
+    let baseParts = parts.[0].Split('.')
+    let major = if baseParts.Length > 0 then int baseParts.[0] else 0
+    let minor = if baseParts.Length > 1 then int baseParts.[1] else 0
+    let patch = if baseParts.Length > 2 then int baseParts.[2] else 0
+
+    let preRelease =
+        if parts.Length > 1 then
+            let pre = parts.[1]
+            let numMatch = Regex.Match(pre, @"(\d+)$")
+            let num = if numMatch.Success then int numMatch.Groups.[1].Value else 1
+            if pre.StartsWith("alpha") then Alpha num
+            elif pre.StartsWith("beta") then Beta num
+            elif pre.StartsWith("rc") then RC num
+            else Stable
+        else
+            Stable
+
+    { Major = major; Minor = minor; Patch = patch; PreRelease = preRelease }
+
+let formatVersion (v: Version) : string =
+    let base' = sprintf "%d.%d.%d" v.Major v.Minor v.Patch
+    match v.PreRelease with
+    | Alpha n -> sprintf "%s-alpha.%d" base' n
+    | Beta n -> sprintf "%s-beta.%d" base' n
+    | RC n -> sprintf "%s-rc.%d" base' n
+    | Stable -> base'
+
+let bumpPreRelease (v: Version) : Version =
+    match v.PreRelease with
+    | Alpha n -> { v with PreRelease = Alpha (n + 1) }
+    | Beta n -> { v with PreRelease = Beta (n + 1) }
+    | RC n -> { v with PreRelease = RC (n + 1) }
+    | Stable -> { v with Patch = v.Patch + 1 }
+
+let promoteToBeta (v: Version) : Version =
+    { v with PreRelease = Beta 1 }
+
+let promoteToRC (v: Version) : Version =
+    { v with PreRelease = RC 1 }
+
+let promoteToStable (v: Version) : Version =
+    { v with PreRelease = Stable }
+
+let bumpPatch (v: Version) : Version =
+    { v with Patch = v.Patch + 1; PreRelease = Stable }
+
+let bumpMinor (v: Version) : Version =
+    { v with Minor = v.Minor + 1; Patch = 0; PreRelease = Stable }
+
+let bumpMajor (v: Version) : Version =
+    { Major = v.Major + 1; Minor = 0; Patch = 0; PreRelease = Stable }
+
+let startAlpha (v: Version) : Version =
+    { v with Minor = v.Minor + 1; Patch = 0; PreRelease = Alpha 1 }
 
 let hasUncommittedChanges () =
     let (code1, _, _) = run "git" "diff --quiet"
@@ -78,57 +134,83 @@ let promptYesNo message =
     response.ToLower() = "y"
 
 let showHelp () =
-    printfn "Usage: dotnet fsi scripts/release.fsx <version>"
+    printfn "Usage: mise run release [command]"
     printfn ""
-    printfn "Version can be:"
-    printfn "  patch         - bump patch version (0.1.0 -> 0.1.1)"
-    printfn "  minor         - bump minor version (0.1.0 -> 0.2.0)"
-    printfn "  major         - bump major version (0.1.0 -> 1.0.0)"
-    printfn "  alpha         - add alpha suffix (0.1.0 -> 0.1.0-alpha)"
-    printfn "  beta          - add beta suffix (0.1.0 -> 0.1.0-beta)"
-    printfn "  rc            - add rc suffix (0.1.0 -> 0.1.0-rc)"
-    printfn "  <explicit>    - use explicit version (e.g., 0.1.0-alpha.1)"
+    printfn "Semantic Versioning Rules:"
+    printfn "  MAJOR  - breaking changes (removed/changed public APIs)"
+    printfn "  MINOR  - new features (added public APIs, backward compatible)"
+    printfn "  PATCH  - bug fixes (no API changes)"
+    printfn ""
+    printfn "Commands:"
+    printfn "  (none)    - bump current pre-release, or patch if stable"
+    printfn "  alpha     - start new alpha cycle (bumps minor)"
+    printfn "  beta      - promote to beta"
+    printfn "  rc        - promote to release candidate"
+    printfn "  stable    - promote to stable release"
+    printfn "  patch     - bump patch version (bug fix, no API changes)"
+    printfn "  minor     - bump minor version (added APIs)"
+    printfn "  major     - bump major version (breaking changes)"
     printfn ""
     printfn "Examples:"
-    printfn "  mise run release 0.1.0-alpha    # first alpha release"
-    printfn "  mise run release patch          # 0.1.0-alpha -> 0.1.1"
-    printfn "  mise run release 1.0.0          # explicit stable release"
+    printfn "  mise run release           # 0.1.0-alpha.1 → 0.1.0-alpha.2"
+    printfn "  mise run release beta      # 0.1.0-alpha.3 → 0.1.0-beta.1"
+    printfn "  mise run release stable    # 0.1.0-rc.1 → 0.1.0"
+    printfn "  mise run release           # 0.1.0 → 0.1.1 (patch)"
+    printfn "  mise run release alpha     # 0.1.1 → 0.2.0-alpha.1"
 
 [<EntryPoint>]
 let main argv =
-    let arg =
-        if argv.Length > 0 then argv.[0]
-        else "patch"
+    let cmd = if argv.Length > 0 then argv.[0] else ""
 
-    if arg = "--help" || arg = "-h" then
+    if cmd = "--help" || cmd = "-h" then
         showHelp ()
         exit 0
 
     // Get current version
     let latestTag = getLatestTag ()
     let currentVersion =
-        if String.IsNullOrEmpty(latestTag) then "0.0.0"
-        else latestTag.TrimStart('v')
+        if String.IsNullOrEmpty(latestTag) then
+            { Major = 0; Minor = 0; Patch = 0; PreRelease = Stable }
+        else
+            parseVersion latestTag
 
-    printfn "Current version: %s" currentVersion
+    let currentVersionStr = formatVersion currentVersion
+    printfn "Current version: %s" currentVersionStr
 
     // Calculate new version
     let newVersion =
-        if isExplicitVersion arg then
-            // Explicit version provided
-            arg
-        else
-            // Bump type provided
-            let (major, minor, patch) = parseVersion currentVersion
-            let ((newMajor, newMinor, newPatch), suffix) = bumpVersion (major, minor, patch) arg
-            match suffix with
-            | Some s -> sprintf "%d.%d.%d-%s" newMajor newMinor newPatch s
-            | None -> sprintf "%d.%d.%d" newMajor newMinor newPatch
+        match cmd with
+        | "" -> bumpPreRelease currentVersion
+        | "alpha" -> startAlpha currentVersion
+        | "beta" -> promoteToBeta currentVersion
+        | "rc" -> promoteToRC currentVersion
+        | "stable" -> promoteToStable currentVersion
+        | "patch" -> bumpPatch currentVersion
+        | "minor" -> bumpMinor currentVersion
+        | "major" -> bumpMajor currentVersion
+        | _ ->
+            eprintfn "Unknown command: %s" cmd
+            eprintfn "Run with --help for usage"
+            exit 1
 
-    let newTag = sprintf "v%s" newVersion
+    let newVersionStr = formatVersion newVersion
+    let newTag = sprintf "v%s" newVersionStr
 
-    printfn "New version: %s" newVersion
+    printfn "New version: %s" newVersionStr
     printfn "New tag: %s" newTag
+
+    // Show semver reminder for major/minor
+    match cmd with
+    | "major" ->
+        printfn ""
+        printfn "MAJOR version bump - ensure this includes breaking API changes"
+    | "minor" ->
+        printfn ""
+        printfn "MINOR version bump - ensure this adds new public APIs"
+    | "patch" ->
+        printfn ""
+        printfn "PATCH version bump - ensure no public API changes"
+    | _ -> ()
 
     // Check for uncommitted changes
     if hasUncommittedChanges () then
@@ -141,16 +223,16 @@ let main argv =
         exit 1
 
     // Update version in .fsproj
-    updateVersionInFsproj newVersion
-    printfn "Updated %s to version %s" fsproj newVersion
+    updateVersionInFsproj newVersionStr
+    printfn "Updated %s to version %s" fsproj newVersionStr
 
     // Commit the version bump
     runOrFail "git" (sprintf "add %s" fsproj) |> ignore
-    runOrFail "git" (sprintf "commit -m \"Bump version to %s\"" newVersion) |> ignore
+    runOrFail "git" (sprintf "commit -m \"Bump version to %s\"" newVersionStr) |> ignore
     printfn "Committed version bump"
 
     // Create tag
-    runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" newTag newVersion) |> ignore
+    runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" newTag newVersionStr) |> ignore
     printfn "Created tag %s" newTag
 
     // Prompt to push
@@ -162,7 +244,7 @@ let main argv =
         runOrFail "git" (sprintf "push origin %s" newTag) |> ignore
         printfn ""
         printfn "Pushed! Release workflow will run at:"
-        printfn "https://github.com/michaelglass/falco-union-routes/actions"
+        printfn "https://github.com/michaelglass/Falco.UnionRoutes/actions"
     else
         printfn ""
         printfn "Not pushed. To push manually:"
