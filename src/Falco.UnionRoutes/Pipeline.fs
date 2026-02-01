@@ -154,6 +154,16 @@ module Pipeline =
             | true, i -> Ok i
             | false, _ -> Error error
 
+    /// Require an int route parameter with dynamic error.
+    let requireRouteIntWith<'TError> (paramName: string) (errorFn: unit -> 'TError) : Pipeline<int, 'TError> =
+        fun ctx ->
+            let route = Request.getRoute ctx
+            let value = route.GetString paramName
+
+            match Int32.TryParse(value) with
+            | true, i -> Ok i
+            | false, _ -> Error(errorFn ())
+
     // =========================================================================
     // Pipeline Execution
     // =========================================================================
@@ -182,12 +192,3 @@ module Pipeline =
                 | Error e -> return! toResponse e ctx
                 | Ok a -> return! handler a ctx
             }
-
-    /// Run a pipeline with different error handlers for different contexts.
-    /// Useful when the same pipeline should redirect for pages but return JSON for APIs.
-    let runWith
-        (toResponse: 'TError -> HttpHandler)
-        (pipeline: Pipeline<'a, 'TError>)
-        (handler: 'a -> HttpHandler)
-        : HttpHandler =
-        run toResponse pipeline handler

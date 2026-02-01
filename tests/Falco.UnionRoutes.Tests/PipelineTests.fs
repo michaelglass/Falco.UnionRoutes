@@ -245,6 +245,46 @@ let ``requireRouteInt returns error for non-numeric`` () =
     let result = pipeline ctx
     Assert.Equal(Error(BadRequest "Invalid page"), result)
 
+[<Fact>]
+let ``requireRouteIntWith returns int for valid number`` () =
+    let ctx = createMockContextWithRoute [ ("page", "123") ]
+    let pipeline = requireRouteIntWith "page" (fun () -> BadRequest "Invalid page")
+    let result = pipeline ctx
+    Assert.Equal(Ok 123, result)
+
+[<Fact>]
+let ``requireRouteIntWith uses lazy error for invalid number`` () =
+    let mutable called = false
+
+    let errorFn () =
+        called <- true
+        BadRequest "Invalid page"
+
+    let ctx = createMockContextWithRoute [ ("page", "not-a-number") ]
+    let pipeline = requireRouteIntWith "page" errorFn
+    pipeline ctx |> ignore
+    called |> should be True
+
+// =============================================================================
+// ignoreResult tests
+// =============================================================================
+
+[<Fact>]
+let ``ignoreResult converts success to unit`` () =
+    let p: Pipeline<int, TestError> = fun _ -> Ok 42
+    let ignored = ignoreResult p
+    let ctx = createMockContext ()
+    let result = ignored ctx
+    Assert.Equal(Ok(), result)
+
+[<Fact>]
+let ``ignoreResult preserves error`` () =
+    let p: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
+    let ignored = ignoreResult p
+    let ctx = createMockContext ()
+    let result = ignored ctx
+    Assert.Equal(Error NotAuthenticated, result)
+
 // =============================================================================
 // Real-world composition tests
 // =============================================================================
