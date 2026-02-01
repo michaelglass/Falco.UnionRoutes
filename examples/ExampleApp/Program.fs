@@ -307,7 +307,7 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
     let apiStatus: HttpHandler = Response.ofJson {| version = "2.0"; status = "ok" |}
 
 // =============================================================================
-// 8. Route Handler
+// 8. Route Handler (Pattern Matching Approach)
 // =============================================================================
 // Map routes to handlers, using pipelines for validation
 
@@ -340,6 +340,54 @@ let routeHandler (route: Route) : HttpHandler =
     // API routes
     | Route.Api ApiRoute.Webhook -> Handlers.webhook
     | Route.Api ApiRoute.Status -> Handlers.apiStatus
+
+// =============================================================================
+// 8b. Alternative: TypedRoutes Builder (Servant-inspired)
+// =============================================================================
+// This approach provides compile-time verification that handlers match
+// their route's parameter types. The pattern function's return type
+// constrains the handler's parameter type.
+
+/// Example using TypedRoutes builder for PostRoute subset
+let typedPostHandler: PostRoute -> HttpHandler =
+    typed<PostRoute, AppError> toErrorResponse
+    // Unit route - no parameters
+    |> route0
+        (function
+        | PostRoute.List -> true
+        | _ -> false)
+        Handlers.listPosts
+    |> route0
+        (function
+        | PostRoute.Create -> true
+        | _ -> false)
+        (Pipeline.run toErrorResponse requireAuth Handlers.createPost)
+    // Guid routes - pattern return type (Guid option) constrains handler to accept Guid
+    |> routeGuid
+        (function
+        | PostRoute.Detail id -> Some id
+        | _ -> None)
+        "id"
+        (BadRequest "Invalid post ID")
+        (fun id -> Handlers.getPost (PostId id))
+    // GuidWith routes - combine route param with pipeline (e.g., auth)
+    |> routeGuidWith
+        (function
+        | PostRoute.Delete id -> Some id
+        | _ -> None)
+        "id"
+        (BadRequest "Invalid post ID")
+        requireAuth
+        (fun (userId, id) -> Handlers.deletePost (userId, PostId id))
+    |> routeGuidWith
+        (function
+        | PostRoute.Patch id -> Some id
+        | _ -> None)
+        "id"
+        (BadRequest "Invalid post ID")
+        requireAuth
+        (fun (userId, id) -> Handlers.patchPost (userId, PostId id))
+    |> build
 
 // =============================================================================
 // 9. Convert to Falco Endpoints
