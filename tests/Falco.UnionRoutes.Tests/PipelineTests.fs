@@ -2,7 +2,7 @@ module Falco.UnionRoutes.Tests.PipelineTests
 
 open System
 open Xunit
-open FsUnit.Xunit
+open Swensen.Unquote
 open Falco.UnionRoutes
 open Microsoft.AspNetCore.Http
 
@@ -40,18 +40,15 @@ let createMockContextWithRoute (routeValues: (string * string) list) =
 
 [<Fact>]
 let ``requireSome returns Ok for Some value`` () =
-    let result = requireSome TestError.NotAuthenticated (Some 42)
-    Assert.Equal(Ok 42, result)
+    test <@ requireSome TestError.NotAuthenticated (Some 42) = Ok 42 @>
 
 [<Fact>]
 let ``requireSome returns Error for None`` () =
-    let result = requireSome TestError.NotAuthenticated None
-    Assert.Equal(Error TestError.NotAuthenticated, result)
+    test <@ requireSome TestError.NotAuthenticated None = Error TestError.NotAuthenticated @>
 
 [<Fact>]
 let ``requireSomeWith returns Ok for Some value`` () =
-    let result = requireSomeWith (fun () -> TestError.NotAuthenticated) (Some "hello")
-    Assert.Equal(Ok "hello", result)
+    test <@ requireSomeWith (fun () -> TestError.NotAuthenticated) (Some "hello") = Ok "hello" @>
 
 [<Fact>]
 let ``requireSomeWith returns Error with lazy evaluation for None`` () =
@@ -62,7 +59,7 @@ let ``requireSomeWith returns Error with lazy evaluation for None`` () =
         TestError.NotAuthenticated
 
     requireSomeWith errorFn None |> ignore
-    called |> should be True
+    test <@ called @>
 
 // =============================================================================
 // Pipeline composition tests
@@ -73,30 +70,24 @@ let ``Pipeline composition with <&> combines results`` () =
     let p1: Pipeline<int, TestError> = fun _ -> Ok 1
     let p2: Pipeline<string, TestError> = fun _ -> Ok "hello"
     let combined = p1 <&> p2
-
     let ctx = createMockContext ()
-    let result = combined ctx
-    Assert.Equal(Ok(1, "hello"), result)
+    test <@ combined ctx = Ok(1, "hello") @>
 
 [<Fact>]
 let ``Pipeline composition short-circuits on first error`` () =
     let p1: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
     let p2: Pipeline<string, TestError> = fun _ -> Ok "hello"
     let combined = p1 <&> p2
-
     let ctx = createMockContext ()
-    let result = combined ctx
-    Assert.Equal(Error NotAuthenticated, result)
+    test <@ combined ctx = Error NotAuthenticated @>
 
 [<Fact>]
 let ``Pipeline composition returns second error if first succeeds`` () =
     let p1: Pipeline<int, TestError> = fun _ -> Ok 1
     let p2: Pipeline<string, TestError> = fun _ -> Error(NotFound "not found")
     let combined = p1 <&> p2
-
     let ctx = createMockContext ()
-    let result = combined ctx
-    Assert.Equal(Error(NotFound "not found"), result)
+    test <@ combined ctx = Error(NotFound "not found") @>
 
 [<Fact>]
 let ``Triple composition works`` () =
@@ -104,10 +95,8 @@ let ``Triple composition works`` () =
     let p2: Pipeline<string, TestError> = fun _ -> Ok "two"
     let p3: Pipeline<bool, TestError> = fun _ -> Ok true
     let combined = p1 <&> p2 <&> p3
-
     let ctx = createMockContext ()
-    let result = combined ctx
-    Assert.Equal(Ok((1, "two"), true), result)
+    test <@ combined ctx = Ok((1, "two"), true) @>
 
 // =============================================================================
 // Pipeline.map tests
@@ -117,19 +106,15 @@ let ``Triple composition works`` () =
 let ``map transforms successful result`` () =
     let p: Pipeline<int, TestError> = fun _ -> Ok 5
     let mapped = map (fun x -> x * 2) p
-
     let ctx = createMockContext ()
-    let result = mapped ctx
-    Assert.Equal(Ok 10, result)
+    test <@ mapped ctx = Ok 10 @>
 
 [<Fact>]
 let ``map preserves error`` () =
     let p: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
     let mapped = map (fun x -> x * 2) p
-
     let ctx = createMockContext ()
-    let result = mapped ctx
-    Assert.Equal(Error NotAuthenticated, result)
+    test <@ mapped ctx = Error NotAuthenticated @>
 
 // =============================================================================
 // Pipeline.bind tests
@@ -140,10 +125,8 @@ let ``bind chains pipelines`` () =
     let p1: Pipeline<int, TestError> = fun _ -> Ok 5
     let p2 (x: int) : Pipeline<string, TestError> = fun _ -> Ok $"value: {x}"
     let chained = bind p2 p1
-
     let ctx = createMockContext ()
-    let result = chained ctx
-    Assert.Equal(Ok "value: 5", result)
+    test <@ chained ctx = Ok "value: 5" @>
 
 [<Fact>]
 let ``bind short-circuits on error`` () =
@@ -156,10 +139,9 @@ let ``bind short-circuits on error`` () =
             Ok $"value: {x}"
 
     let chained = bind p2 p1
-
     let ctx = createMockContext ()
     chained ctx |> ignore
-    called |> should be False
+    test <@ not called @>
 
 // =============================================================================
 // Pipeline.succeed and Pipeline.fail tests
@@ -170,14 +152,14 @@ let ``succeed always returns Ok`` () =
     let p = succeed 42
     let ctx = createMockContext ()
     let result: Result<int, TestError> = p ctx
-    Assert.Equal(Ok 42, result)
+    test <@ result = Ok 42 @>
 
 [<Fact>]
 let ``fail always returns Error`` () =
     let p = fail NotAuthenticated
     let ctx = createMockContext ()
     let result: Result<int, TestError> = p ctx
-    Assert.Equal(Error NotAuthenticated, result)
+    test <@ result = Error NotAuthenticated @>
 
 // =============================================================================
 // Route parameter extraction tests
@@ -187,70 +169,60 @@ let ``fail always returns Error`` () =
 let ``tryGetRouteGuid returns Some for valid GUID`` () =
     let guid = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", guid.ToString()) ]
-    let result = tryGetRouteGuid ctx "id"
-    Assert.Equal(Some guid, result)
+    test <@ tryGetRouteGuid ctx "id" = Some guid @>
 
 [<Fact>]
 let ``tryGetRouteGuid returns None for invalid GUID`` () =
     let ctx = createMockContextWithRoute [ ("id", "not-a-guid") ]
-    let result = tryGetRouteGuid ctx "id"
-    Assert.Equal(None, result)
+    test <@ tryGetRouteGuid ctx "id" = None @>
 
 [<Fact>]
 let ``tryGetRouteGuid returns None for missing parameter`` () =
     let ctx = createMockContext ()
-    let result = tryGetRouteGuid ctx "id"
-    Assert.Equal(None, result)
+    test <@ tryGetRouteGuid ctx "id" = None @>
 
 [<Fact>]
 let ``requireRouteId returns typed ID for valid GUID`` () =
     let guid = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", guid.ToString()) ]
     let pipeline = requireRouteId "id" UserId (BadRequest "Invalid ID")
-    let result = pipeline ctx
-    Assert.Equal(Ok(UserId guid), result)
+    test <@ pipeline ctx = Ok(UserId guid) @>
 
 [<Fact>]
 let ``requireRouteId returns error for invalid GUID`` () =
     let ctx = createMockContextWithRoute [ ("id", "invalid") ]
     let pipeline = requireRouteId "id" UserId (BadRequest "Invalid ID")
-    let result = pipeline ctx
-    Assert.Equal(Error(BadRequest "Invalid ID"), result)
+    test <@ pipeline ctx = Error(BadRequest "Invalid ID") @>
 
 [<Fact>]
 let ``requireRouteStr returns string for valid param`` () =
     let ctx = createMockContextWithRoute [ ("name", "test-value") ]
     let pipeline = requireRouteStr "name" (BadRequest "Missing name")
-    let result = pipeline ctx
-    Assert.Equal(Ok "test-value", result)
+    test <@ pipeline ctx = Ok "test-value" @>
 
 [<Fact>]
 let ``requireRouteStr returns error for empty param`` () =
     let ctx = createMockContextWithRoute [ ("name", "") ]
     let pipeline = requireRouteStr "name" (BadRequest "Missing name")
-    let result = pipeline ctx
-    Assert.Equal(Error(BadRequest "Missing name"), result)
+    test <@ pipeline ctx = Error(BadRequest "Missing name") @>
 
 [<Fact>]
 let ``requireRouteInt returns int for valid number`` () =
     let ctx = createMockContextWithRoute [ ("page", "42") ]
     let pipeline = requireRouteInt "page" (BadRequest "Invalid page")
-    let result = pipeline ctx
-    Assert.Equal(Ok 42, result)
+    test <@ pipeline ctx = Ok 42 @>
 
 [<Fact>]
 let ``requireRouteInt returns error for non-numeric`` () =
     let ctx = createMockContextWithRoute [ ("page", "abc") ]
     let pipeline = requireRouteInt "page" (BadRequest "Invalid page")
-    let result = pipeline ctx
-    Assert.Equal(Error(BadRequest "Invalid page"), result)
+    test <@ pipeline ctx = Error(BadRequest "Invalid page") @>
 
 [<Fact>]
 let ``requireRouteIntWith returns int for valid number`` () =
     let ctx = createMockContextWithRoute [ ("page", "123") ]
     let pipeline = requireRouteIntWith "page" (fun () -> BadRequest "Invalid page")
-    let result = pipeline ctx
-    Assert.Equal(Ok 123, result)
+    test <@ pipeline ctx = Ok 123 @>
 
 [<Fact>]
 let ``requireRouteIntWith uses lazy error for invalid number`` () =
@@ -263,7 +235,7 @@ let ``requireRouteIntWith uses lazy error for invalid number`` () =
     let ctx = createMockContextWithRoute [ ("page", "not-a-number") ]
     let pipeline = requireRouteIntWith "page" errorFn
     pipeline ctx |> ignore
-    called |> should be True
+    test <@ called @>
 
 // =============================================================================
 // ignoreResult tests
@@ -274,16 +246,14 @@ let ``ignoreResult converts success to unit`` () =
     let p: Pipeline<int, TestError> = fun _ -> Ok 42
     let ignored = ignoreResult p
     let ctx = createMockContext ()
-    let result = ignored ctx
-    Assert.Equal(Ok(), result)
+    test <@ ignored ctx = Ok() @>
 
 [<Fact>]
 let ``ignoreResult preserves error`` () =
     let p: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
     let ignored = ignoreResult p
     let ctx = createMockContext ()
-    let result = ignored ctx
-    Assert.Equal(Error NotAuthenticated, result)
+    test <@ ignored ctx = Error NotAuthenticated @>
 
 // =============================================================================
 // Real-world composition tests
@@ -291,7 +261,6 @@ let ``ignoreResult preserves error`` () =
 
 [<Fact>]
 let ``Real-world: auth + route param composition`` () =
-    // Simulate requireAuth
     let requireAuth: Pipeline<UserId, TestError> =
         fun ctx ->
             match ctx.Request.Headers.TryGetValue("X-User-Id") with
@@ -301,20 +270,15 @@ let ``Real-world: auth + route param composition`` () =
                 | false, _ -> Error NotAuthenticated
             | false, _ -> Error NotAuthenticated
 
-    // Require post ID
     let requirePostId = requireRouteId "id" PostId (BadRequest "Invalid post ID")
-
-    // Compose
     let combined = requireAuth <&> requirePostId
 
-    // Test with valid auth and route
     let userId = Guid.NewGuid()
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
-    let result = combined ctx
-    Assert.Equal(Ok(UserId userId, PostId postId), result)
+    test <@ combined ctx = Ok(UserId userId, PostId postId) @>
 
 [<Fact>]
 let ``Real-world: auth failure short-circuits`` () =
@@ -325,5 +289,4 @@ let ``Real-world: auth failure short-circuits`` () =
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
 
-    let result = combined ctx
-    Assert.Equal(Error NotAuthenticated, result)
+    test <@ combined ctx = Error NotAuthenticated @>

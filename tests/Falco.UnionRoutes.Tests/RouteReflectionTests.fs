@@ -2,7 +2,7 @@ module Falco.UnionRoutes.Tests.RouteReflectionTests
 
 open System
 open Xunit
-open FsUnit.Xunit
+open Swensen.Unquote
 open Falco.UnionRoutes
 
 // =============================================================================
@@ -35,21 +35,21 @@ type TestRoute =
 
 [<Fact>]
 let ``toKebabCase converts PascalCase to kebab-case`` () =
-    Assert.Equal("digest-view", RouteReflection.toKebabCase "DigestView")
-    Assert.Equal("login-page", RouteReflection.toKebabCase "LoginPage")
-    Assert.Equal("dashboard", RouteReflection.toKebabCase "Dashboard")
+    test <@ RouteReflection.toKebabCase "DigestView" = "digest-view" @>
+    test <@ RouteReflection.toKebabCase "LoginPage" = "login-page" @>
+    test <@ RouteReflection.toKebabCase "Dashboard" = "dashboard" @>
 
 [<Fact>]
 let ``toKebabCase handles single word`` () =
-    Assert.Equal("home", RouteReflection.toKebabCase "Home")
-    Assert.Equal("profile", RouteReflection.toKebabCase "Profile")
+    test <@ RouteReflection.toKebabCase "Home" = "home" @>
+    test <@ RouteReflection.toKebabCase "Profile" = "profile" @>
 
 [<Fact>]
 let ``toKebabCase handles consecutive capitals correctly`` () =
     // Consecutive capitals get split before final lowercase transition
-    Assert.Equal("html-parser", RouteReflection.toKebabCase "HTMLParser")
-    Assert.Equal("url-handler", RouteReflection.toKebabCase "URLHandler")
-    Assert.Equal("get-api-data", RouteReflection.toKebabCase "GetAPIData")
+    test <@ RouteReflection.toKebabCase "HTMLParser" = "html-parser" @>
+    test <@ RouteReflection.toKebabCase "URLHandler" = "url-handler" @>
+    test <@ RouteReflection.toKebabCase "GetAPIData" = "get-api-data" @>
 
 // =============================================================================
 // Simple route tests
@@ -57,18 +57,14 @@ let ``toKebabCase handles consecutive capitals correctly`` () =
 
 [<Fact>]
 let ``Health route returns correct path`` () =
-    let result = RouteReflection.tryRouteInfo TestRoute.Health
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/health", info.Path)
+    let info = RouteReflection.routeInfo TestRoute.Health
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/health" @>
 
 [<Fact>]
 let ``Home route with empty path returns root`` () =
-    let result = RouteReflection.tryRouteInfo TestRoute.Home
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal("/", info.Path)
+    let info = RouteReflection.routeInfo TestRoute.Home
+    test <@ info.Path = "/" @>
 
 // =============================================================================
 // Parameterized route tests
@@ -76,41 +72,31 @@ let ``Home route with empty path returns root`` () =
 
 [<Fact>]
 let ``PostRoute.List returns correct path`` () =
-    let result = RouteReflection.tryRouteInfo PostRoute.List
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/posts", info.Path)
+    let info = RouteReflection.routeInfo PostRoute.List
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/posts" @>
 
 [<Fact>]
 let ``PostRoute.Detail includes parameter placeholder`` () =
     let id = Guid.NewGuid()
-    let result = RouteReflection.tryRouteInfo (PostRoute.Detail id)
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/posts/{id}", info.Path)
+    let info = RouteReflection.routeInfo (PostRoute.Detail id)
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/posts/{id}" @>
 
 [<Fact>]
 let ``PostRoute.Create uses POST method`` () =
-    let result = RouteReflection.tryRouteInfo PostRoute.Create
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Post, info.Method)
+    let info = RouteReflection.routeInfo PostRoute.Create
+    test <@ info.Method = HttpMethod.Post @>
 
 [<Fact>]
 let ``PostRoute.Update uses PUT method`` () =
-    let result = RouteReflection.tryRouteInfo (PostRoute.Update(Guid.NewGuid()))
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Put, info.Method)
+    let info = RouteReflection.routeInfo (PostRoute.Update(Guid.NewGuid()))
+    test <@ info.Method = HttpMethod.Put @>
 
 [<Fact>]
 let ``PostRoute.Delete uses DELETE method`` () =
-    let result = RouteReflection.tryRouteInfo (PostRoute.Delete(Guid.NewGuid()))
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Delete, info.Method)
+    let info = RouteReflection.routeInfo (PostRoute.Delete(Guid.NewGuid()))
+    test <@ info.Method = HttpMethod.Delete @>
 
 // =============================================================================
 // Nested route tests
@@ -118,34 +104,26 @@ let ``PostRoute.Delete uses DELETE method`` () =
 
 [<Fact>]
 let ``Nested route combines paths correctly`` () =
-    let result =
-        RouteReflection.tryRouteInfo (TestRoute.Api(ApiRoute.Posts PostRoute.List))
-
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/posts", info.Path)
+    let info = RouteReflection.routeInfo (TestRoute.Api(ApiRoute.Posts PostRoute.List))
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/posts" @>
 
 [<Fact>]
 let ``Deeply nested route with param`` () =
     let id = Guid.NewGuid()
 
-    let result =
-        RouteReflection.tryRouteInfo (TestRoute.Api(ApiRoute.Posts(PostRoute.Detail id)))
+    let info =
+        RouteReflection.routeInfo (TestRoute.Api(ApiRoute.Posts(PostRoute.Detail id)))
 
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/posts/{id}", info.Path)
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/posts/{id}" @>
 
 [<Fact>]
 let ``Nested route inherits method from leaf`` () =
-    let result =
-        RouteReflection.tryRouteInfo (TestRoute.Api(ApiRoute.Posts PostRoute.Create))
+    let info =
+        RouteReflection.routeInfo (TestRoute.Api(ApiRoute.Posts PostRoute.Create))
 
-    Assert.True(result.IsSome)
-    let info = result.Value
-    Assert.Equal(HttpMethod.Post, info.Method)
+    test <@ info.Method = HttpMethod.Post @>
 
 // =============================================================================
 // routeInfo (throwing version) tests
@@ -154,14 +132,14 @@ let ``Nested route inherits method from leaf`` () =
 [<Fact>]
 let ``routeInfo returns info for valid route`` () =
     let info = RouteReflection.routeInfo PostRoute.List
-    Assert.Equal(HttpMethod.Get, info.Method)
-    Assert.Equal("/posts", info.Path)
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/posts" @>
 
 [<Fact>]
 let ``routeTuple returns method and path`` () =
     let (method, path) = RouteReflection.routeTuple PostRoute.List
-    Assert.Equal(HttpMethod.Get, method)
-    Assert.Equal("/posts", path)
+    test <@ method = HttpMethod.Get @>
+    test <@ path = "/posts" @>
 
 // =============================================================================
 // allRoutes enumeration tests
@@ -170,14 +148,14 @@ let ``routeTuple returns method and path`` () =
 [<Fact>]
 let ``allRoutes enumerates all route cases`` () =
     let routes = RouteReflection.allRoutes<PostRoute> ()
-    routes |> should haveLength 5
+    test <@ List.length routes = 5 @>
 
 [<Fact>]
 let ``allRoutes enumerates nested routes`` () =
     let routes = RouteReflection.allRoutes<TestRoute> ()
     // TestRoute has: Api (containing Posts + Users), Health, Home
     // Posts: 5 cases, Users: 2 cases = 7 from Api + 2 top-level = 9 total
-    routes |> should haveLength 9
+    test <@ List.length routes = 9 @>
 
 [<Fact>]
 let ``allRoutes uses default values for parameters`` () =
@@ -191,7 +169,7 @@ let ``allRoutes uses default values for parameters`` () =
             | _ -> false)
 
     match detailRoute with
-    | PostRoute.Detail id -> Assert.Equal(Guid.Empty, id)
+    | PostRoute.Detail id -> test <@ id = Guid.Empty @>
     | _ -> failwith "Expected Detail route"
 
 [<Fact>]
@@ -205,4 +183,4 @@ let ``All enumerated routes have valid RouteAttribute`` () =
             | None -> Some $"Route missing attribute: {route}"
             | Some _ -> None)
 
-    invalidRoutes |> should be Empty
+    test <@ List.isEmpty invalidRoutes @>
