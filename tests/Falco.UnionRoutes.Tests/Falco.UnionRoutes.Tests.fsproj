@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="RouteReflectionTests.fs" />
     <Compile Include="PipelineTests.fs" />
+    <Compile Include="TypedRoutesTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -24,6 +25,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="FsUnit.xUnit" Version="6.0.1" />
+    <PackageReference Include="Unquote" Version="7.0.0" />
     <PackageReference Include="coverlet.collector" Version="6.0.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

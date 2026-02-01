@@ -23,6 +23,7 @@
     <Compile Include="RouteAttributes.fs" />
     <Compile Include="RouteReflection.fs" />
     <Compile Include="Pipeline.fs" />
+    <Compile Include="TypedRoutes.fs" />
   </ItemGroup>
 
   <ItemGroup>
