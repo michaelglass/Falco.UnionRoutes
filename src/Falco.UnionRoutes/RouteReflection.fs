@@ -9,9 +9,22 @@ open FSharp.Reflection
 /// Reflection utilities for extracting route information from discriminated unions
 module RouteReflection =
 
-    /// Convert PascalCase to kebab-case (e.g., "DigestView" -> "digest-view")
+    // Precompiled regex for better performance during route enumeration
+    let private kebabCaseRegex =
+        Regex(@"([a-z])([A-Z])|([A-Z]+)([A-Z][a-z])", RegexOptions.Compiled)
+
+    /// Convert PascalCase to kebab-case (e.g., "DigestView" -> "digest-view", "HTMLParser" -> "html-parser")
     let toKebabCase (s: string) =
-        Regex.Replace(s, "([a-z])([A-Z])", "$1-$2").ToLowerInvariant()
+        kebabCaseRegex
+            .Replace(
+                s,
+                fun m ->
+                    if m.Groups.[1].Success then
+                        $"{m.Groups.[1].Value}-{m.Groups.[2].Value}"
+                    else
+                        $"{m.Groups.[3].Value}-{m.Groups.[4].Value}"
+            )
+            .ToLowerInvariant()
 
     /// Convert RouteMethod enum to HttpMethod DU
     let toHttpMethod (rm: RouteMethod) : HttpMethod =
@@ -29,6 +42,12 @@ module RouteReflection =
         case.GetCustomAttributes(typeof<RouteAttribute>)
         |> Array.tryHead
         |> Option.map (fun a -> a :?> RouteAttribute)
+
+    /// Get the Path from a RouteAttribute as Option (handles CLR null)
+    let private getAttrPath (attr: RouteAttribute) : string option =
+        match attr.Path with
+        | null -> None
+        | path -> Some path
 
     /// Check if a type is a nested route union (for hierarchy traversal)
     let private isNestedRouteUnion (t: Type) =
@@ -65,9 +84,9 @@ module RouteReflection =
     /// Get path segment from a case (uses attribute Path if set, otherwise infers from fields or case name)
     /// Special cases for empty path: "Root", "List", "Create", "Show"
     let private getPathSegment (case: UnionCaseInfo) : string =
-        match getRouteAttr case with
-        | Some attr when not (isNull attr.Path) -> attr.Path
-        | _ ->
+        match getRouteAttr case |> Option.bind getAttrPath with
+        | Some path -> path
+        | None ->
             // First try to infer from fields
             match inferPathFromFields case with
             | Some path -> path
@@ -201,7 +220,12 @@ module RouteReflection =
                     |> Array.fold
                         (fun (seg: string) (i, f) ->
                             let value = fieldValues.[i]
-                            let valueStr = if isNull value then "" else value.ToString()
+
+                            let valueStr =
+                                match box value with
+                                | null -> ""
+                                | v -> v.ToString()
+
                             seg.Replace("{" + f.Name + "}", valueStr))
                         segmentPattern
 
