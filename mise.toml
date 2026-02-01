@@ -33,9 +33,14 @@ description = "Run FSharpLint"
 run = "dotnet fsharplint lint Falco.UnionRoutes.sln"
 depends = ["build"]
 
+[tasks.coverage-check]
+description = "Check per-file coverage meets minimum threshold (50%)"
+run = "dotnet fsi scripts/check-coverage.fsx"
+depends = ["test"]
+
 [tasks.ci]
 description = "Run all CI checks"
-depends = ["format-check", "lint", "test", "docs"]
+depends = ["format-check", "lint", "coverage-check", "docs"]
 
 [tasks.pack]
 description = "Create NuGet package"
