@@ -95,19 +95,25 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 
 ### Route Conventions
 
-| Case Definition                      | Method | Path               | Notes                    |
-|--------------------------------------|--------|--------------------|--------------------------|
-| `List`                               | GET    | `/`                | empty path               |
-| `Root`                               | GET    | `/`                | empty path               |
-| `Show`                               | GET    | `/`                | empty path               |
-| `Create`                             | POST   | `/`                | empty path               |
-| `Delete of id: Guid`                 | DELETE | `/{id}`            | field name → path param  |
-| `Patch of id: Guid`                  | PATCH  | `/{id}`            | field name → path param  |
-| `Detail of id: Guid`                 | GET    | `/{id}`            | field name → path param  |
-| `Health`                             | GET    | `/health`          | kebab-case from name     |
-| `DigestView`                         | GET    | `/digest-view`     | kebab-case from name     |
-| `Edit of a: Guid * b: Guid`          | GET    | `/{a}/{b}`         | multiple path params     |
-| `Posts of PostRoute`                 | —      | `/posts/...`       | nested routes            |
+**Routing behavior:**
+
+| Case Definition                      | Path               | Notes                    |
+|--------------------------------------|--------------------|--------------------------|
+| `Health`                             | `/health`          | kebab-case from name     |
+| `DigestView`                         | `/digest-view`     | kebab-case from name     |
+| `Detail of id: Guid`                 | `/{id}`            | field name → path param  |
+| `Edit of a: Guid * b: Guid`          | `/{a}/{b}`         | multiple path params     |
+| `Posts of PostRoute`                 | `/posts/...`       | nested DU → path prefix  |
+
+**Special case names:**
+
+| Case Name | Method | Path | Notes                          |
+|-----------|--------|------|--------------------------------|
+| `Root`    | GET    | `/`  | empty path                     |
+| `List`    | GET    | `/`  | empty path                     |
+| `Create`  | POST   | `/`  | empty path, POST method        |
+| `Delete`  | DELETE | —    | DELETE method (path from args) |
+| `Patch`   | PATCH  | —    | PATCH method (path from args)  |
 
 Override with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
 
