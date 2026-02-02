@@ -10,7 +10,7 @@
   <ItemGroup>
     <Compile Include="RouteReflectionTests.fs" />
     <Compile Include="PipelineTests.fs" />
-    <Compile Include="TypedRoutesTests.fs" />
+    <Compile Include="RouteHydrationTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
