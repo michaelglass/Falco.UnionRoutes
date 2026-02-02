@@ -22,6 +22,7 @@ open Microsoft.AspNetCore.Http
 // Use single-case unions for type-safe IDs
 
 type UserId = UserId of Guid
+type AdminId = AdminId of Guid
 type PostId = PostId of Guid
 type Slug = Slug of string
 
@@ -34,16 +35,16 @@ type Slug = Slug of string
 
 // Convention-based routes (no attributes needed for common patterns)
 // Fields define what each route needs:
-// - UserId fields are populated via auth pipeline
+// - Pre<UserId> fields come from preconditions (auth, validation, etc.)
 // - Wrapper types like PostId (single-case DU of Guid) are auto-detected
 // - Query<'T> fields extract from query string
 // - Query<'T> option returns None when query param is missing
 type PostRoute =
     | List of page: Query<int> option // GET /posts?page=2 - optional query param
     | Detail of id: PostId // GET /posts/{id} - extracts Guid, wraps as PostId
-    | Create of UserId // POST /posts - requires auth
-    | Delete of UserId * id: PostId // DELETE /posts/{id} - auth + PostId
-    | Patch of UserId * id: PostId // PATCH /posts/{id} - auth + PostId
+    | Create of Pre<UserId> // POST /posts - requires auth precondition
+    | Delete of Pre<UserId> * id: PostId // DELETE /posts/{id} - auth + PostId
+    | Patch of Pre<UserId> * id: PostId // PATCH /posts/{id} - auth + PostId
     | [<Route(Path = "search")>] Search of query: Query<string> // GET /posts/search?query=... - required query param
 
 // Explicit attributes for custom paths or overriding conventions
@@ -60,11 +61,20 @@ type ApiRoute =
     | [<Route(Path = "v2/status")>] Status // Custom nested path
     | [<Route(Path = "articles/{slug}")>] Article of slug: Slug // Custom type with custom extractor
 
+// Multiple preconditions example
+// Routes can require multiple different precondition types
+type AdminRoute =
+    | Dashboard of Pre<AdminId> // Admin auth only
+    | [<Route(Path = "users")>] UserList of Pre<AdminId> // Admin auth only
+    | [<Route(Path = "users/{id}")>] UserDetail of Pre<AdminId> * id: UserId // Admin + route param
+    | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of Pre<AdminId> * Pre<UserId> * id: Guid // Admin auth + current user + target user id
+
 type Route =
     | Root
     | Posts of PostRoute
     | Users of UserRoute
     | Api of ApiRoute
+    | Admin of AdminRoute
     | Health
 
 // =============================================================================
@@ -141,12 +151,25 @@ let requireAuth: Pipeline<UserId, AppError> =
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
 
+/// Extract admin from auth header (simplified example)
+/// In a real app, this might check roles/permissions
+let requireAdmin: Pipeline<AdminId, AppError> =
+    fun ctx ->
+        match ctx.Request.Headers.TryGetValue("X-Admin-Id") with
+        | true, values ->
+            match Guid.TryParse(values.ToString()) with
+            | true, guid -> Ok(AdminId guid)
+            | false, _ -> Error Forbidden
+        | false, _ -> Error Forbidden
+
 // =============================================================================
 // 6b. Route Hydration
 // =============================================================================
 // RouteHydration.create automatically extracts fields based on their types:
-// - UserId fields use the auth pipeline (auth errors preserve their type)
-// - Guid fields are extracted from route params by field name
+// - Pre<'T> fields use matching preconditions (auth errors preserve their type)
+// - Guid, string, int, int64, bool fields are extracted from route params
+// - Wrapper types (single-case DUs like PostId) are auto-detected
+// - Query<'T> fields extract from query string
 // - Custom extractors can handle domain-specific types like Slug
 // - All errors are accumulated and combined via combineErrors function
 
@@ -159,13 +182,20 @@ let combineErrors (errors: AppError list) =
     | [ single ] -> single // Single error preserved as-is
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
+/// Create auth precondition for Pre<UserId>
+/// The result is automatically wrapped in Pre when extracted
+let authPrecondition () = RouteHydration.forPre<UserId, AppError> requireAuth
+
+/// Create admin precondition for Pre<AdminId>
+let adminPrecondition () = RouteHydration.forPre<AdminId, AppError> requireAdmin
+
 /// Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
-    RouteHydration.create<PostRoute, UserId, AppError> requireAuth makeError combineErrors
+    RouteHydration.create<PostRoute, AppError> [ authPrecondition () ] [] makeError combineErrors
 
-/// Hydrate UserRoute - no auth needed, just extracts route params
+/// Hydrate UserRoute - no preconditions needed, just extracts route params
 let hydrateUser: UserRoute -> Pipeline<UserRoute, AppError> =
-    RouteHydration.createNoAuth<UserRoute, AppError> makeError combineErrors
+    RouteHydration.create<UserRoute, AppError> [] [] makeError combineErrors
 
 /// Custom extractor for Slug type - demonstrates extensibility
 let slugExtractor: TypeExtractor =
@@ -183,7 +213,16 @@ let slugExtractor: TypeExtractor =
 
 /// Hydrate ApiRoute - uses custom extractor for Slug type
 let hydrateApi: ApiRoute -> Pipeline<ApiRoute, AppError> =
-    RouteHydration.createNoAuthWith<ApiRoute, AppError> [ slugExtractor ] makeError combineErrors
+    RouteHydration.create<ApiRoute, AppError> [] [ slugExtractor ] makeError combineErrors
+
+/// Hydrate AdminRoute - uses BOTH user and admin preconditions
+/// Routes can require multiple different precondition types
+let hydrateAdmin: AdminRoute -> Pipeline<AdminRoute, AppError> =
+    RouteHydration.create<AdminRoute, AppError>
+        [ adminPrecondition (); authPrecondition () ] // Both preconditions available
+        []
+        makeError
+        combineErrors
 
 // =============================================================================
 // 7. Handlers
@@ -194,7 +233,10 @@ module Handlers =
 
     /// Replace {param} placeholders with sample GUID for browsable links
     let makeBrowsablePath (path: string) =
-        path.Replace("{id}", sampleId.ToString())
+        path
+            .Replace("{id}", sampleId.ToString())
+            .Replace("{userId}", sampleId.ToString())
+            .Replace("{slug}", "hello-world")
 
     /// Render a single route as an HTML list item
     let renderRoute (route: Route) =
@@ -239,7 +281,16 @@ module Handlers =
 curl -X POST http://localhost:5000/posts -H "X-User-Id: {sampleId}"
 
 # Delete post (requires X-User-Id header)
-curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}" """ ] ]
+curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
+
+# Admin dashboard (requires X-Admin-Id header)
+curl http://localhost:5000/admin -H "X-Admin-Id: {sampleId}"
+
+# Ban user (requires BOTH X-Admin-Id AND X-User-Id headers)
+# This demonstrates multiple preconditions: Pre<AdminId> * Pre<UserId> * id
+curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
+  -H "X-Admin-Id: {sampleId}" \
+  -H "X-User-Id: {sampleId}" """ ] ]
 
     let health: HttpHandler = Response.ofJson {| status = "ok" |}
 
@@ -377,6 +428,80 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
               Elem.p [] [ Text.raw "This demonstrates custom type extraction with a Slug type." ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
+    // Admin handlers - demonstrate multiple preconditions
+    let adminDashboard (adminId: AdminId) : HttpHandler =
+        let (AdminId aid) = adminId
+
+        htmlResponse
+            "Admin Dashboard"
+            [ Elem.h1 [] [ Text.raw "Admin Dashboard" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Admin ID: " ]
+                    Elem.code [] [ Text.raw (aid.ToString()) ] ]
+              Elem.p [] [ Text.raw "This route requires Pre<AdminId> - admin authentication." ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let adminUserList (adminId: AdminId) : HttpHandler =
+        let (AdminId aid) = adminId
+
+        htmlResponse
+            "User Management"
+            [ Elem.h1 [] [ Text.raw "User Management" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Admin: " ]
+                    Elem.code [] [ Text.raw (aid.ToString()) ] ]
+              Elem.ul
+                  []
+                  [ Elem.li [] [ Text.raw "User 1: alice@example.com" ]
+                    Elem.li [] [ Text.raw "User 2: bob@example.com" ] ]
+              Elem.a [ Attr.href "/admin" ] [ Text.raw "Back to admin" ] ]
+
+    let adminUserDetail (adminId: AdminId, userId: UserId) : HttpHandler =
+        let (AdminId aid) = adminId
+        let (UserId uid) = userId
+
+        htmlResponse
+            "User Detail"
+            [ Elem.h1 [] [ Text.raw "User Detail (Admin View)" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Viewing User: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Admin: " ]
+                    Elem.code [] [ Text.raw (aid.ToString()) ] ]
+              Elem.p [] [ Text.raw "This route uses Pre<AdminId> + id: UserId (route param wrapped as UserId)." ]
+              Elem.a [ Attr.href "/admin/users" ] [ Text.raw "Back to user list" ] ]
+
+    let banUser (adminId: AdminId, actingUserId: UserId, targetUserId: Guid) : HttpHandler =
+        let (AdminId aid) = adminId
+        let (UserId uid) = actingUserId
+
+        htmlResponse
+            "User Banned"
+            [ Elem.h1 [ Attr.class' "error" ] [ Text.raw "User Banned!" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Banned User: " ]
+                    Elem.code [] [ Text.raw (targetUserId.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Admin: " ]
+                    Elem.code [] [ Text.raw (aid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Acting User: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Text.raw "This route demonstrates "
+                    Elem.strong [] [ Text.raw "multiple preconditions" ]
+                    Text.raw ": Pre<AdminId> * Pre<UserId> * id: Guid" ]
+              Elem.a [ Attr.href "/admin/users" ] [ Text.raw "Back to user list" ] ]
+
 // =============================================================================
 // 8. Post Handler (using hydration)
 // =============================================================================
@@ -387,9 +512,9 @@ let handlePost (route: PostRoute) : HttpHandler =
     match route with
     | PostRoute.List page -> Handlers.listPosts page
     | PostRoute.Detail postId -> Handlers.getPost postId
-    | PostRoute.Create userId -> Handlers.createPost userId
-    | PostRoute.Delete(userId, postId) -> Handlers.deletePost (userId, postId)
-    | PostRoute.Patch(userId, postId) -> Handlers.patchPost (userId, postId)
+    | PostRoute.Create(Pre userId) -> Handlers.createPost userId
+    | PostRoute.Delete(Pre userId, postId) -> Handlers.deletePost (userId, postId)
+    | PostRoute.Patch(Pre userId, postId) -> Handlers.patchPost (userId, postId)
     | PostRoute.Search query -> Handlers.searchPosts query
 
 /// Combined: hydrate then handle
@@ -425,6 +550,22 @@ let apiHandler (route: ApiRoute) : HttpHandler =
     Pipeline.run toErrorResponse (hydrateApi route) handleApi
 
 // =============================================================================
+// 8d. Admin Handler (using hydration with MULTIPLE preconditions)
+// =============================================================================
+// Demonstrates routes that require different combinations of preconditions
+
+let handleAdmin (route: AdminRoute) : HttpHandler =
+    match route with
+    | AdminRoute.Dashboard(Pre adminId) -> Handlers.adminDashboard adminId
+    | AdminRoute.UserList(Pre adminId) -> Handlers.adminUserList adminId
+    | AdminRoute.UserDetail(Pre adminId, userId) -> Handlers.adminUserDetail (adminId, userId)
+    | AdminRoute.BanUser(Pre adminId, Pre userId, targetId) -> Handlers.banUser (adminId, userId, targetId)
+
+/// Combined: hydrate then handle (uses both admin and user preconditions)
+let adminHandler (route: AdminRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydrateAdmin route) handleAdmin
+
+// =============================================================================
 // 9. Top-level Route Handler
 // =============================================================================
 
@@ -441,6 +582,9 @@ let routeHandler (route: Route) : HttpHandler =
 
     // ApiRoute uses hydration with custom Slug extractor
     | Route.Api apiRoute -> apiHandler apiRoute
+
+    // AdminRoute uses hydration with MULTIPLE preconditions (admin + user)
+    | Route.Admin adminRoute -> adminHandler adminRoute
 
 // =============================================================================
 // 10. Convert to Falco Endpoints
