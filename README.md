@@ -116,6 +116,7 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `Create`  | POST   | `/`  | empty path, POST method        |
 | `Delete`  | DELETE | —    | DELETE method (path from args) |
 | `Patch`   | PATCH  | —    | PATCH method (path from args)  |
+| `Show`    | GET    | —    | param-only path (no case name prefix) |
 
 **Override with attributes:**
 
@@ -185,7 +186,7 @@ Routes can be nested. When a case has both parameters AND a nested route, the ca
 ```fsharp
 type ItemRoute =
     | List
-    | Detail of itemId: Guid
+    | Show of itemId: Guid                         // "Show" convention: /{itemId}
 
 type Route =
     | Items of ItemRoute                           // /items/...
