@@ -26,6 +26,10 @@ type StringRoute = BySlug of slug: string
 
 type IntRoute = ByPage of page: int
 
+type Int64Route = ByBigId of id: int64
+
+type BoolRoute = ByEnabled of enabled: bool
+
 // Wrapper types (single-case DUs)
 type PostId = PostId of Guid
 
@@ -111,6 +115,12 @@ let hydrateString () =
 
 let hydrateInt () =
     RouteHydration.create<IntRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+
+let hydrateInt64 () =
+    RouteHydration.create<Int64Route, UserId, TestError> (mockAuth ()) makeError combineErrors
+
+let hydrateBool () =
+    RouteHydration.create<BoolRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
 
 let hydrateWrapper () =
     RouteHydration.create<WrapperRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
@@ -276,6 +286,85 @@ let ``handles negative int`` () =
 let ``returns error for non-numeric int param`` () =
     let ctx = createMockContextWithRoute [ ("page", "abc") ]
     let pipeline = hydrateInt () (IntRoute.ByPage 0)
+    let result = pipeline ctx
+    test <@ Result.isError result @>
+
+// =============================================================================
+// Int64 field tests
+// =============================================================================
+
+[<Fact>]
+let ``hydrates int64 field from route params`` () =
+    // Use a number that fits in int32 range to avoid ASP.NET Core's scientific notation issue
+    let ctx = createMockContextWithRoute [ ("id", "1234567890") ]
+    let pipeline = hydrateInt64 () (Int64Route.ByBigId 0L)
+    test <@ pipeline ctx = Ok(Int64Route.ByBigId 1234567890L) @>
+
+[<Fact>]
+let ``hydrates negative int64 field`` () =
+    // Note: "-9876543210" is outside int32 range, testing true int64 support
+    let ctx = createMockContextWithRoute [ ("id", "-9876543210") ]
+    let pipeline = hydrateInt64 () (Int64Route.ByBigId 0L)
+    test <@ pipeline ctx = Ok(Int64Route.ByBigId -9876543210L) @>
+
+[<Fact>]
+let ``hydrates Int64.MaxValue from route params`` () =
+    let ctx = createMockContextWithRoute [ ("id", "9223372036854775807") ]
+    let pipeline = hydrateInt64 () (Int64Route.ByBigId 0L)
+    test <@ pipeline ctx = Ok(Int64Route.ByBigId 9223372036854775807L) @>
+
+[<Fact>]
+let ``documents Falco bug - GetString converts large numbers to scientific notation`` () =
+    // Documents https://github.com/falcoframework/Falco/issues/149
+    // Falco's GetString converts string values through numeric types
+    let ctx = createMockContextWithRoute [ ("id", "9223372036854775807") ]
+
+    // Raw RouteValues is correct
+    test <@ ctx.Request.RouteValues.["id"].ToString() = "9223372036854775807" @>
+
+    // But Falco's GetString converts it (bug!)
+    let route = Falco.Request.getRoute ctx
+    test <@ route.GetString "id" = "9.223372036854776E+18" @>
+
+[<Fact>]
+let ``documents Falco bug - TryGetInt64 overflows on large values`` () =
+    // Documents https://github.com/falcoframework/Falco/issues/149
+    let ctx = createMockContextWithRoute [ ("id", "9223372036854775807") ]
+    let route = Falco.Request.getRoute ctx
+    let threw =
+        try
+            route.TryGetInt64 "id" |> ignore
+            false
+        with :? System.OverflowException -> true
+    test <@ threw @>
+
+[<Fact>]
+let ``returns error for non-numeric int64 param`` () =
+    let ctx = createMockContextWithRoute [ ("id", "abc") ]
+    let pipeline = hydrateInt64 () (Int64Route.ByBigId 0L)
+    let result = pipeline ctx
+    test <@ Result.isError result @>
+
+// =============================================================================
+// Bool field tests
+// =============================================================================
+
+[<Fact>]
+let ``hydrates bool field from route params - true`` () =
+    let ctx = createMockContextWithRoute [ ("enabled", "true") ]
+    let pipeline = hydrateBool () (BoolRoute.ByEnabled false)
+    test <@ pipeline ctx = Ok(BoolRoute.ByEnabled true) @>
+
+[<Fact>]
+let ``hydrates bool field from route params - false`` () =
+    let ctx = createMockContextWithRoute [ ("enabled", "false") ]
+    let pipeline = hydrateBool () (BoolRoute.ByEnabled true)
+    test <@ pipeline ctx = Ok(BoolRoute.ByEnabled false) @>
+
+[<Fact>]
+let ``returns error for invalid bool param`` () =
+    let ctx = createMockContextWithRoute [ ("enabled", "yes") ]
+    let pipeline = hydrateBool () (BoolRoute.ByEnabled false)
     let result = pipeline ctx
     test <@ Result.isError result @>
 
