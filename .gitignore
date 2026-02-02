@@ -21,6 +21,7 @@
 *.snupkg
 .nuget/
 packages/
+.nuget-api-key
 
 # Visual Studio
 .vs/
