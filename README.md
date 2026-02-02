@@ -95,31 +95,21 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 
 ### Route Conventions
 
-**HTTP Methods** (by case name):
-| Case Name | Method |
-|-----------|--------|
-| `Create`  | POST   |
-| `Delete`  | DELETE |
-| `Patch`   | PATCH  |
-| others    | GET    |
+| Case Definition                      | Method | Path               | Notes                    |
+|--------------------------------------|--------|--------------------|--------------------------|
+| `List`                               | GET    | `/`                | empty path               |
+| `Root`                               | GET    | `/`                | empty path               |
+| `Show`                               | GET    | `/`                | empty path               |
+| `Create`                             | POST   | `/`                | empty path               |
+| `Delete of id: Guid`                 | DELETE | `/{id}`            | field name → path param  |
+| `Patch of id: Guid`                  | PATCH  | `/{id}`            | field name → path param  |
+| `Detail of id: Guid`                 | GET    | `/{id}`            | field name → path param  |
+| `Health`                             | GET    | `/health`          | kebab-case from name     |
+| `DigestView`                         | GET    | `/digest-view`     | kebab-case from name     |
+| `Edit of a: Guid * b: Guid`          | GET    | `/{a}/{b}`         | multiple path params     |
+| `Posts of PostRoute`                 | —      | `/posts/...`       | nested routes            |
 
-**Paths** (by case name and fields):
-| Case | Path |
-|------|------|
-| `List`, `Root`, `Create`, `Show` | `/` (empty segment) |
-| `Detail of id: Guid` | `/{id}` (from field name) |
-| `UserPosts of userId: Guid * postId: Guid` | `/{userId}/{postId}` |
-| `Health` | `/health` (kebab-case) |
-| `DigestView` | `/digest-view` (kebab-case) |
-
-**Nesting** (DU fields become path prefixes):
-```fsharp
-type PostRoute = List | Detail of id: Guid
-type Route = Posts of PostRoute    // /posts, /posts/{id}
-           | Users of UserRoute    // /users, /users/{id}
-```
-
-**Override** with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
+Override with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
 
 ### Marker Types
 
