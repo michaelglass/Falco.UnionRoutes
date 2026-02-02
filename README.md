@@ -115,7 +115,15 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `Delete`  | DELETE | —    | DELETE method (path from args) |
 | `Patch`   | PATCH  | —    | PATCH method (path from args)  |
 
-Override with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
+**Override with attributes:**
+
+```fsharp
+[<Route(RouteMethod.Put)>]                           // just method
+[<Route(Path = "custom/{id}")>]                      // just path
+[<Route(RouteMethod.Put, Path = "custom/{id}")>]     // both
+```
+
+Available methods: `Get`, `Post`, `Put`, `Delete`, `Patch`, `Any`
 
 ### Marker Types
 
