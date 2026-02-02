@@ -845,3 +845,114 @@ let ``Both Pre and OptPre work when both headers provided`` () =
         test <@ uid = userId @>
     | Ok _ -> Assert.Fail("Unexpected route structure")
     | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
+
+// =============================================================================
+// Precondition validation tests
+// =============================================================================
+
+/// Route with Pre<UserId> that requires a precondition
+type RouteNeedingPrecondition =
+    | Public
+    | Private of Pre<UserId>
+
+[<Fact>]
+let ``validatePreconditions returns Ok when all preconditions registered`` () =
+    let preconditions = [ RouteHydration.forPre<UserId, TestError> mockUserAuth ]
+
+    let result =
+        RouteHydration.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
+
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``validatePreconditions returns Error when precondition missing`` () =
+    let preconditions: Precondition<TestError> list = []
+
+    let result =
+        RouteHydration.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
+    | Ok() -> failwith "Expected validation error for missing precondition"
+
+/// Route with multiple precondition types
+type RouteWithMultiplePreconditions =
+    | Admin of Pre<AdminId>
+    | User of Pre<UserId>
+    | Both of Pre<AdminId> * Pre<UserId>
+
+[<Fact>]
+let ``validatePreconditions catches all missing preconditions`` () =
+    let preconditions: Precondition<TestError> list = []
+
+    let result =
+        RouteHydration.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
+
+    match result with
+    | Error errors ->
+        test
+            <@
+                errors
+                |> List.exists (fun e -> e.Contains("Pre<UserId>") || e.Contains("Pre<AdminId>"))
+            @>
+    | Ok() -> failwith "Expected validation error for missing preconditions"
+
+[<Fact>]
+let ``validatePreconditions passes when all multiple preconditions registered`` () =
+    let preconditions =
+        [ RouteHydration.forPre<UserId, TestError> mockUserAuth
+          RouteHydration.forPre<AdminId, TestError> mockAdminAuth ]
+
+    let result =
+        RouteHydration.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
+
+    test <@ result = Ok() @>
+
+/// Route with OptPre<UserId>
+type RouteWithOptPre =
+    | Normal of OptPre<UserId>
+    | [<SkipAllPreconditions>] Public
+
+[<Fact>]
+let ``validatePreconditions requires OptPre preconditions too`` () =
+    let preconditions: Precondition<TestError> list = []
+
+    let result =
+        RouteHydration.validatePreconditions<RouteWithOptPre, TestError> preconditions
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
+    | Ok() -> failwith "Expected validation error for missing OptPre precondition"
+
+[<Fact>]
+let ``validatePreconditions passes with OptPre precondition registered`` () =
+    let preconditions = [ RouteHydration.forOptPre<UserId, TestError> mockUserAuth ]
+
+    let result =
+        RouteHydration.validatePreconditions<RouteWithOptPre, TestError> preconditions
+
+    test <@ result = Ok() @>
+
+// =============================================================================
+// Full validation tests (structure + preconditions)
+// =============================================================================
+
+[<Fact>]
+let ``validate combines structure and precondition validation`` () =
+    let preconditions = [ RouteHydration.forPre<UserId, TestError> mockUserAuth ]
+
+    let result =
+        RouteHydration.validate<RouteNeedingPrecondition, TestError> preconditions
+
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``validate catches missing preconditions`` () =
+    let preconditions: Precondition<TestError> list = []
+
+    let result =
+        RouteHydration.validate<RouteNeedingPrecondition, TestError> preconditions
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
+    | Ok() -> failwith "Expected validation error"

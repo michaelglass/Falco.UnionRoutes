@@ -548,3 +548,84 @@ let ``Issue #1 - Multiple single-case Pre routes should have distinct paths`` ()
     test <@ paths |> List.contains "/orgs/search" @>
     test <@ paths |> List.contains "/users/search" @>
     test <@ paths |> List.contains "/metrics" @>
+
+// =============================================================================
+// Route validation tests
+// =============================================================================
+
+/// Valid route for validation tests
+type ValidRoute =
+    | Home
+    | Detail of id: Guid
+    | Search of query: Query<string>
+
+[<Fact>]
+let ``validateStructure returns Ok for valid routes`` () =
+    let result = RouteReflection.validateStructure<ValidRoute> ()
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``validateStructure returns Ok for nested routes`` () =
+    let result = RouteReflection.validateStructure<TestRoute> ()
+    test <@ result = Ok() @>
+
+/// Route with invalid characters in path
+type InvalidCharsRoute = | [<Route(Path = "hello world")>] WithSpace
+
+[<Fact>]
+let ``validateStructure catches invalid path characters`` () =
+    let result = RouteReflection.validateStructure<InvalidCharsRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Invalid characters")) @>
+    | Ok() -> failwith "Expected validation error for invalid characters"
+
+/// Route with unbalanced braces
+type UnbalancedBracesRoute =
+    | [<Route(Path = "users/{id")>] MissingClose
+    | [<Route(Path = "users/id}")>] MissingOpen
+
+[<Fact>]
+let ``validateStructure catches unbalanced braces`` () =
+    let result = RouteReflection.validateStructure<UnbalancedBracesRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Unbalanced braces")) @>
+    | Ok() -> failwith "Expected validation error for unbalanced braces"
+
+/// Route with duplicate path params
+type DuplicateParamsRoute = | [<Route(Path = "{id}/sub/{id}")>] Duplicate of id: Guid
+
+[<Fact>]
+let ``validateStructure catches duplicate path params`` () =
+    let result = RouteReflection.validateStructure<DuplicateParamsRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate path parameters")) @>
+    | Ok() -> failwith "Expected validation error for duplicate params"
+
+/// Route with path param not matching field name
+type MismatchedParamRoute = | [<Route(Path = "{userId}")>] Profile of id: Guid
+
+[<Fact>]
+let ``validateStructure catches path param not matching field name`` () =
+    let result = RouteReflection.validateStructure<MismatchedParamRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("not found in fields")) @>
+    | Ok() -> failwith "Expected validation error for mismatched param"
+
+/// Route with multiple nested unions (unsupported)
+type ChildRouteA = | A
+
+type ChildRouteB = | B
+
+type MultipleNestedRoute = Both of ChildRouteA * ChildRouteB
+
+[<Fact>]
+let ``validateStructure catches multiple nested route unions`` () =
+    let result = RouteReflection.validateStructure<MultipleNestedRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route unions")) @>
+    | Ok() -> failwith "Expected validation error for multiple nested unions"
