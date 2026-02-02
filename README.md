@@ -143,35 +143,6 @@ type Route =
 
 Routes appear at `/metrics` and `/health-deep`, not `/internal/metrics`.
 
-### Nested Routes with Parent Params
-
-When a route case has both parameters AND a nested route, the case name is included in the path:
-
-```fsharp
-type UserItemRoute =
-    | List
-    | Detail of itemId: ItemId
-    | [<SkipAllPreconditions>] Public  // skips optional preconditions
-
-type NestedUserRoute =
-    | Items of UserItemRoute
-
-type UserWithParamsRoute =
-    NestedUser of userId: UserId * OptionalPreCondition<AdminId> * NestedUserRoute
-
-// Handler receives parent params explicitly, passes to child
-let handleUserItem (userId: UserId) (adminId: AdminId option) (route: UserItemRoute) : HttpHandler =
-    match route with
-    | List -> Handlers.userItemList userId adminId
-    | Detail itemId -> Handlers.userItemDetail userId itemId adminId
-    | Public -> Handlers.userItemPublic userId  // adminId skipped
-
-let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
-    match route with
-    | NestedUser (userId, OptPre adminId, nestedRoute) ->
-        handleNestedUser userId (Some adminId) nestedRoute
-```
-
 ### Marker Types
 
 | Type | Source | Example |
@@ -181,49 +152,119 @@ let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
 | `PreCondition<'T>` | Precondition pipeline | auth, validation (strict) |
 | `OptionalPreCondition<'T>` | Skippable precondition | child routes can opt out |
 
-### Skippable Preconditions
+### Preconditions
 
-Use `OptionalPreCondition<'T>` for preconditions that child routes can skip:
+`PreCondition<'T>` fields are extracted from precondition pipelines (auth, validation, etc.), not from the URL:
+
+```fsharp
+type PostRoute =
+    | List                                    // no auth required
+    | Create of PreCondition<UserId>          // requires auth
+    | Delete of PreCondition<UserId> * id: Guid  // auth + route param
+```
+
+**Skippable preconditions:** Use `OptionalPreCondition<'T>` when child routes can opt out:
 
 ```fsharp
 type UserItemRoute =
-    | List                                             // inherits parent preconditions
+    | List                                             // inherits preconditions
     | [<SkipAllPreconditions>] Public                  // skips all optional preconditions
-    | [<SkipPrecondition(typeof<AdminId>)>] Limited    // skips only OptionalPreCondition<AdminId>
+    | [<SkipPrecondition(typeof<AdminId>)>] Limited    // skips specific one
 
-type UserWithParamsRoute =
-    NestedUser of userId: UserId * OptionalPreCondition<AdminId> * NestedUserRoute
-
-// Handler uses _ pattern for skipped preconditions
-let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
-    match route with
-    | NestedUser (userId, OptPre adminId, Items List) ->
-        // adminId verified and available
-        handleList userId (Some adminId)
-    | NestedUser (userId, _, Items Public) ->
-        // adminId skipped - use _ pattern
-        handlePublic userId
+type Route =
+    | Users of userId: UserId * OptionalPreCondition<AdminId> * UserItemRoute
 ```
 
-Key points:
 - `PreCondition<'T>` is strict - always runs, cannot be skipped
-- `OptionalPreCondition<'T>` is skippable - child routes can opt out
-- `[<SkipAllPreconditions>]` skips all optional preconditions
-- `[<SkipPrecondition(typeof<T>)>]` skips specific `OptionalPreCondition<T>`
+- `OptionalPreCondition<'T>` is skippable via attributes on child routes
+
+### Nested Routes
+
+Routes can be nested. When a case has both parameters AND a nested route, the case name becomes a path segment:
+
+```fsharp
+type ItemRoute =
+    | List
+    | Detail of itemId: Guid
+
+type Route =
+    | Items of ItemRoute                           // /items/...
+    | UserItems of userId: Guid * ItemRoute        // /user-items/{userId}/...
+```
+
+### Route Validation
+
+Validate routes at startup to catch configuration errors early (not at request time).
+
+**At app startup:**
+
+```fsharp
+// Collect all preconditions
+let allPreconditions =
+    [ authPrecondition ()
+      adminPrecondition ()
+      optAdminPrecondition () ]
+
+// Validate precondition coverage - fails fast if any Pre<T>/OptPre<T> is missing
+do
+    match RouteHydration.validatePreconditions<Route, AppError> allPreconditions with
+    | Ok () -> ()
+    | Error errors ->
+        let errorMsg = errors |> String.concat "\n  - "
+        failwith $"Route precondition validation failed:\n  - {errorMsg}"
+
+// endpoints also validates route structure (paths, field names, etc.) automatically
+let endpoints = RouteReflection.endpoints routeHandler
+```
+
+**In tests (recommended):**
+
+```fsharp
+[<Fact>]
+let ``all routes are valid`` () =
+    let preconditions =
+        [ authPrecondition ()
+          adminPrecondition ()
+          optAdminPrecondition () ]
+
+    // Full validation: route structure + precondition coverage
+    let result = RouteHydration.validate<Route, AppError> preconditions
+    Assert.Equal(Ok (), result)
+```
+
+**What gets validated:**
+
+| Check | When |
+|-------|------|
+| Invalid path characters | `endpoints` (automatic) |
+| Unbalanced braces in paths | `endpoints` (automatic) |
+| Duplicate path params | `endpoints` (automatic) |
+| Path params match field names | `endpoints` (automatic) |
+| Multiple nested route unions | `endpoints` (automatic) |
+| All `Pre<T>` have preconditions | `validatePreconditions` (manual) |
+| All `OptPre<T>` have preconditions | `validatePreconditions` (manual) |
 
 ### Key Functions
 
 ```fsharp
-RouteReflection.endpoints handler     // Generate Falco endpoints
-RouteReflection.link route            // Type-safe URL: "/posts/abc-123"
-RouteReflection.allRoutes<Route>()    // Enumerate all routes
+// Route reflection
+RouteReflection.endpoints handler        // Generate Falco endpoints (validates structure)
+RouteReflection.link route               // Type-safe URL: "/posts/abc-123"
+RouteReflection.allRoutes<Route>()       // Enumerate all routes
+RouteReflection.validateStructure<Route>() // Validate route structure only
 
+// Route hydration
 RouteHydration.create [preconditions] [extractors] makeError combineErrors
 RouteHydration.forPre<'T,'E> pipeline    // Create strict precondition for Pre<'T>
 RouteHydration.forOptPre<'T,'E> pipeline // Create skippable precondition for OptPre<'T>
 
-Pipeline.run toError pipeline handler // Execute with error handling
-pipeline1 <&> pipeline2               // Combine pipelines
+// Validation
+RouteHydration.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
+RouteHydration.validate<Route, Error> preconditions               // Full validation (for tests)
+
+// Pipeline composition
+Pipeline.run toError pipeline handler    // Execute with error handling
+pipeline1 <&> pipeline2                  // Combine pipelines
 ```
 
 ## License
