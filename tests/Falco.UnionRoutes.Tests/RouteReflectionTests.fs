@@ -436,3 +436,51 @@ let ``Issue #1 - link with single-case wrapper should not include Item`` () =
     let url = RouteReflection.link route
     // Should substitute the postId, not include {Item} or extra segments
     test <@ url = "/posts/22222222-2222-2222-2222-222222222222" @>
+
+// Issue #1 follow-up: Single-case route unions with only Pre<'T> field were incorrectly
+// identified as "single-case wrapper types" because isSingleCaseWrapper wasn't checking
+// if the inner type was a primitive. This caused route enumeration to fail.
+// Example: type ApiAdminOrgRoute = Search of Pre<AdminUserId>
+// Was incorrectly treated as a wrapper type like "PostId of Guid"
+
+type AdminUserId = AdminUserId of Guid
+
+/// Single-case route with only Pre<'T> - should NOT be treated as a wrapper type
+type SingleCasePreRoute = | [<Route(RouteMethod.Get, Path = "search")>] Search of Pre<AdminUserId>
+
+/// Multiple single-case routes with Pre<'T> - all should enumerate correctly
+type MultiSingleCasePreRoutes =
+    | [<Route(RouteMethod.Get, Path = "orgs/search")>] OrgSearch of Pre<AdminUserId>
+    | [<Route(RouteMethod.Get, Path = "users/search")>] UserSearch of Pre<AdminUserId>
+    | [<Route(RouteMethod.Get, Path = "metrics")>] Metrics of Pre<AdminUserId>
+
+[<Fact>]
+let ``Issue #1 - Single-case route with Pre should enumerate correctly`` () =
+    let routes = RouteReflection.allRoutes<SingleCasePreRoute> ()
+    // Should enumerate to exactly 1 route, not 0 or error
+    test <@ List.length routes = 1 @>
+
+[<Fact>]
+let ``Issue #1 - Single-case route with Pre should have correct path`` () =
+    let route = SingleCasePreRoute.Search(Pre(AdminUserId(Guid.NewGuid())))
+    let info = RouteReflection.routeInfo route
+    // Should be /search, not / or something with {Item}
+    test <@ info.Path = "/search" @>
+
+[<Fact>]
+let ``Issue #1 - Multiple single-case Pre routes should all enumerate`` () =
+    let routes = RouteReflection.allRoutes<MultiSingleCasePreRoutes> ()
+    // Should enumerate all 3 routes
+    test <@ List.length routes = 3 @>
+
+[<Fact>]
+let ``Issue #1 - Multiple single-case Pre routes should have distinct paths`` () =
+    let routes = RouteReflection.allRoutes<MultiSingleCasePreRoutes> ()
+
+    let paths =
+        routes |> List.map RouteReflection.routeInfo |> List.map (fun i -> i.Path)
+    // All paths should be different (not all mapping to "/")
+    test <@ List.distinct paths |> List.length = 3 @>
+    test <@ paths |> List.contains "/orgs/search" @>
+    test <@ paths |> List.contains "/users/search" @>
+    test <@ paths |> List.contains "/metrics" @>

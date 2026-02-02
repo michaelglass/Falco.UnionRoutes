@@ -104,6 +104,7 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `Detail of id: Guid`                 | `/{id}`            | field name → path param  |
 | `Edit of a: Guid * b: Guid`          | `/{a}/{b}`         | multiple path params     |
 | `Posts of PostRoute`                 | `/posts/...`       | nested DU → path prefix  |
+| `[<Route(Path = "")>] Api of ApiRoute` | `/...`           | path-less group          |
 
 **Special case names:**
 
@@ -124,6 +125,22 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 ```
 
 Available methods: `Get`, `Post`, `Put`, `Delete`, `Patch`, `Any`
+
+**Path-less groups:**
+
+Use `Path = ""` to group routes without adding a path segment:
+
+```fsharp
+type InternalRoute =
+    | [<Route(Path = "metrics")>] Metrics of PreCondition<AdminId>
+    | [<Route(Path = "health")>] Health of PreCondition<AdminId>
+
+type Route =
+    | Public of PublicRoute
+    | [<Route(Path = "")>] Internal of InternalRoute  // no /internal prefix
+```
+
+Routes appear at `/metrics` and `/health`, not `/internal/metrics`.
 
 ### Marker Types
 

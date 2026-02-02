@@ -68,12 +68,20 @@ module RouteReflection =
         && t.GetGenericArguments().[0].IsGenericType
         && t.GetGenericArguments().[0].GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Query`1"
 
-    /// Check if a type is a single-case DU wrapper (e.g., PostId of Guid)
-    /// These are used for type-safe IDs, not for route hierarchy
+    /// Supported primitive types for route/query extraction
+    let private supportedPrimitives =
+        [ typeof<Guid>; typeof<string>; typeof<int>; typeof<int64>; typeof<bool> ]
+
+    /// Check if a type is a single-case DU wrapper for a primitive (e.g., PostId of Guid)
+    /// These are used for type-safe IDs, not for route hierarchy.
+    /// Only matches wrappers around primitive types - not wrappers around Pre<'T> etc.
     let private isSingleCaseWrapper (t: Type) =
         FSharpType.IsUnion(t)
         && let cases = FSharpType.GetUnionCases(t) in
-           cases.Length = 1 && cases.[0].GetFields().Length = 1
+
+           cases.Length = 1
+           && cases.[0].GetFields().Length = 1
+           && supportedPrimitives |> List.contains (cases.[0].GetFields().[0].PropertyType)
 
     /// Check if a type is a nested route union (for hierarchy traversal)
     /// Excludes: strings, options, Pre<'T>, Query<'T>, single-case wrappers

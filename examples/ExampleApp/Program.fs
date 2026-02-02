@@ -69,12 +69,21 @@ type AdminRoute =
     | [<Route(Path = "users/{id}")>] UserDetail of Pre<AdminId> * id: UserId // Admin + route param
     | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of Pre<AdminId> * Pre<UserId> * id: Guid // Admin auth + current user + target user id
 
+// Path-less group example - groups routes without adding a path segment
+// The empty Path = "" means these routes appear directly under /internal/
+// Each single-case route with only Pre<'T> is correctly handled (not treated as a wrapper type)
+type InternalApiRoute =
+    | [<Route(Path = "metrics")>] Metrics of Pre<AdminId> // GET /internal/metrics
+    | [<Route(Path = "health-deep")>] DeepHealth of Pre<AdminId> // GET /internal/health-deep
+    | [<Route(Path = "cache/clear")>] ClearCache of Pre<AdminId> // GET /internal/cache/clear
+
 type Route =
     | Root
     | Posts of PostRoute
     | Users of UserRoute
     | Api of ApiRoute
     | Admin of AdminRoute
+    | [<Route(Path = "")>] Internal of InternalApiRoute // Path-less group - no path segment added
     | Health
 
 // =============================================================================
@@ -225,6 +234,11 @@ let hydrateAdmin: AdminRoute -> Pipeline<AdminRoute, AppError> =
         []
         makeError
         combineErrors
+
+/// Hydrate InternalApiRoute - admin auth only
+/// Demonstrates single-case routes with only Pre<'T> fields
+let hydrateInternal: InternalApiRoute -> Pipeline<InternalApiRoute, AppError> =
+    RouteHydration.create<InternalApiRoute, AppError> [ adminPrecondition () ] [] makeError combineErrors
 
 // =============================================================================
 // 7. Handlers
@@ -504,6 +518,31 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                     Text.raw ": Pre<AdminId> * Pre<UserId> * id: Guid" ]
               Elem.a [ Attr.href "/admin/users" ] [ Text.raw "Back to user list" ] ]
 
+    // Internal API handlers - demonstrate path-less groups with Pre<'T>-only routes
+    let internalMetrics (adminId: AdminId) : HttpHandler =
+        let (AdminId aid) = adminId
+
+        Response.ofJson
+            {| admin = aid.ToString()
+               metrics = {| requests = 1234; errors = 5 |} |}
+
+    let internalDeepHealth (adminId: AdminId) : HttpHandler =
+        let (AdminId aid) = adminId
+
+        Response.ofJson
+            {| admin = aid.ToString()
+               database = "ok"
+               cache = "ok"
+               queue = "ok" |}
+
+    let internalClearCache (adminId: AdminId) : HttpHandler =
+        let (AdminId aid) = adminId
+
+        Response.ofJson
+            {| admin = aid.ToString()
+               cleared = true
+               message = "Cache cleared" |}
+
 // =============================================================================
 // 8. Post Handler (using hydration)
 // =============================================================================
@@ -568,6 +607,22 @@ let adminHandler (route: AdminRoute) : HttpHandler =
     Pipeline.run toErrorResponse (hydrateAdmin route) handleAdmin
 
 // =============================================================================
+// 8e. Internal API Handler (path-less group with Pre<'T>-only routes)
+// =============================================================================
+// Demonstrates single-case routes where the only field is Pre<'T>
+// These should NOT be treated as wrapper types (fixed in issue #1 follow-up)
+
+let handleInternal (route: InternalApiRoute) : HttpHandler =
+    match route with
+    | InternalApiRoute.Metrics(Pre adminId) -> Handlers.internalMetrics adminId
+    | InternalApiRoute.DeepHealth(Pre adminId) -> Handlers.internalDeepHealth adminId
+    | InternalApiRoute.ClearCache(Pre adminId) -> Handlers.internalClearCache adminId
+
+/// Combined: hydrate then handle
+let internalHandler (route: InternalApiRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydrateInternal route) handleInternal
+
+// =============================================================================
 // 9. Top-level Route Handler
 // =============================================================================
 
@@ -587,6 +642,9 @@ let routeHandler (route: Route) : HttpHandler =
 
     // AdminRoute uses hydration with MULTIPLE preconditions (admin + user)
     | Route.Admin adminRoute -> adminHandler adminRoute
+
+    // InternalApiRoute - path-less group (Path = "") with Pre<'T>-only routes
+    | Route.Internal internalRoute -> internalHandler internalRoute
 
 // =============================================================================
 // 10. Convert to Falco Endpoints
