@@ -32,12 +32,15 @@ type PostId = PostId of Guid
 // - Use {param} syntax for route parameters
 
 // Convention-based routes (no attributes needed for common patterns)
+// Fields define what each route needs:
+// - UserId fields are populated via auth pipeline
+// - Guid fields are extracted from route parameters
 type PostRoute =
-    | List // GET /posts (List → empty path)
-    | Detail of id: Guid // GET /posts/{id} (path from field name)
-    | Create // POST /posts (Create → POST + empty path)
-    | Delete of id: Guid // DELETE /posts/{id} (Delete → DELETE)
-    | Patch of id: Guid // PATCH /posts/{id} (Patch → PATCH)
+    | List // GET /posts - no params
+    | Detail of id: Guid // GET /posts/{id} - just the id
+    | Create of UserId // POST /posts - requires auth
+    | Delete of UserId * id: Guid // DELETE /posts/{id} - auth + id
+    | Patch of UserId * id: Guid // PATCH /posts/{id} - auth + id
 
 // Explicit attributes for custom paths or overriding conventions
 type UserRoute =
@@ -118,10 +121,8 @@ let toErrorResponse (error: AppError) : HttpHandler =
     | BadRequest msg -> errorPage 400 msg
 
 // =============================================================================
-// 6. Pipelines
+// 6. Auth Pipeline
 // =============================================================================
-// Pipelines extract and validate data from HTTP requests.
-// They short-circuit on the first error.
 
 /// Extract user from auth header (simplified example)
 let requireAuth: Pipeline<UserId, AppError> =
@@ -133,13 +134,20 @@ let requireAuth: Pipeline<UserId, AppError> =
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
 
-/// Require a post ID from route parameter
-let requirePostId: Pipeline<PostId, AppError> =
-    requireRouteId "id" PostId (BadRequest "Invalid post ID")
+/// Require a user ID from route parameter (for UserRoute)
+let requireUserIdFromRoute: Pipeline<UserId, AppError> =
+    requireRouteId "userId" UserId (BadRequest "Invalid user ID")
 
-/// Require a user ID from route parameter
-let requireUserId: Pipeline<UserId, AppError> =
-    requireRouteId "id" UserId (BadRequest "Invalid user ID")
+// =============================================================================
+// 6b. Route Hydration
+// =============================================================================
+// RouteHydration.create automatically extracts fields based on their types:
+// - UserId fields use the auth pipeline
+// - Guid fields are extracted from route params by field name
+
+/// Hydrate PostRoute - extracts auth and route params automatically
+let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
+    RouteHydration.create<PostRoute, UserId, AppError> requireAuth BadRequest
 
 // =============================================================================
 // 7. Handlers
@@ -307,34 +315,39 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
     let apiStatus: HttpHandler = Response.ofJson {| version = "2.0"; status = "ok" |}
 
 // =============================================================================
-// 8. Route Handler (Pattern Matching Approach)
+// 8. Post Handler (using hydration)
 // =============================================================================
-// Map routes to handlers, using pipelines for validation
+// The route is automatically hydrated - all fields are populated.
+// Handler just pattern matches and uses the values directly.
+
+let handlePost (route: PostRoute) : HttpHandler =
+    match route with
+    | PostRoute.List -> Handlers.listPosts
+    | PostRoute.Detail id -> Handlers.getPost (PostId id)
+    | PostRoute.Create userId -> Handlers.createPost userId
+    | PostRoute.Delete(userId, id) -> Handlers.deletePost (userId, PostId id)
+    | PostRoute.Patch(userId, id) -> Handlers.patchPost (userId, PostId id)
+
+/// Combined: hydrate then handle
+let postHandler (route: PostRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydratePost route) handlePost
+
+// =============================================================================
+// 9. Top-level Route Handler
+// =============================================================================
 
 let routeHandler (route: Route) : HttpHandler =
     match route with
     | Route.Root -> Handlers.home
     | Route.Health -> Handlers.health
 
-    // Public routes - no authentication required
-    | Route.Posts PostRoute.List -> Handlers.listPosts
+    // PostRoute uses hydration
+    | Route.Posts postRoute -> postHandler postRoute
 
-    // Single pipeline - extract post ID
-    | Route.Posts(PostRoute.Detail _) -> Pipeline.run toErrorResponse requirePostId Handlers.getPost
-
-    // Single pipeline - require authentication
-    | Route.Posts PostRoute.Create -> Pipeline.run toErrorResponse requireAuth Handlers.createPost
-
-    // Composed pipelines - require both auth AND post ID
-    | Route.Posts(PostRoute.Delete _) ->
-        Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.deletePost
-
-    // Patch uses same composed pipeline pattern
-    | Route.Posts(PostRoute.Patch _) -> Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.patchPost
-
-    // User routes
-    | Route.Users(UserRoute.Profile _) -> Pipeline.run toErrorResponse requireUserId Handlers.getProfile
-    | Route.Users(UserRoute.Update _) -> Pipeline.run toErrorResponse requireUserId Handlers.updateUser
+    // User routes (still using manual pipelines for comparison)
+    | Route.Users(UserRoute.Profile _) -> Pipeline.run toErrorResponse requireUserIdFromRoute Handlers.getProfile
+    | Route.Users(UserRoute.Update _) ->
+        Pipeline.run toErrorResponse (requireRouteId "id" UserId (BadRequest "Invalid user ID")) Handlers.updateUser
     | Route.Users UserRoute.Me -> Handlers.currentUser
 
     // API routes
@@ -342,61 +355,13 @@ let routeHandler (route: Route) : HttpHandler =
     | Route.Api ApiRoute.Status -> Handlers.apiStatus
 
 // =============================================================================
-// 8b. Alternative: TypedRoutes Builder (Servant-inspired)
-// =============================================================================
-// This approach provides compile-time verification that handlers match
-// their route's parameter types. The pattern function's return type
-// constrains the handler's parameter type.
-
-/// Example using TypedRoutes builder for PostRoute subset
-let typedPostHandler: PostRoute -> HttpHandler =
-    typed<PostRoute, AppError> toErrorResponse
-    // Unit route - no parameters
-    |> route0
-        (function
-        | PostRoute.List -> true
-        | _ -> false)
-        Handlers.listPosts
-    |> route0
-        (function
-        | PostRoute.Create -> true
-        | _ -> false)
-        (Pipeline.run toErrorResponse requireAuth Handlers.createPost)
-    // Guid routes - pattern return type (Guid option) constrains handler to accept Guid
-    |> routeGuid
-        (function
-        | PostRoute.Detail id -> Some id
-        | _ -> None)
-        "id"
-        (BadRequest "Invalid post ID")
-        (fun id -> Handlers.getPost (PostId id))
-    // GuidWith routes - combine route param with pipeline (e.g., auth)
-    |> routeGuidWith
-        (function
-        | PostRoute.Delete id -> Some id
-        | _ -> None)
-        "id"
-        (BadRequest "Invalid post ID")
-        requireAuth
-        (fun (userId, id) -> Handlers.deletePost (userId, PostId id))
-    |> routeGuidWith
-        (function
-        | PostRoute.Patch id -> Some id
-        | _ -> None)
-        "id"
-        (BadRequest "Invalid post ID")
-        requireAuth
-        (fun (userId, id) -> Handlers.patchPost (userId, PostId id))
-    |> build
-
-// =============================================================================
-// 9. Convert to Falco Endpoints
+// 10. Convert to Falco Endpoints
 // =============================================================================
 
 let endpoints = RouteReflection.endpoints routeHandler
 
 // =============================================================================
-// 10. Application Entry Point
+// 11. Application Entry Point
 // =============================================================================
 
 [<EntryPoint>]

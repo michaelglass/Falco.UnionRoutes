@@ -6,6 +6,7 @@ Coming from Haskell, I missed Servant-style routing. So I built this library to 
 
 - **Type-safe Routes**: Define routes as discriminated unions with attributes
 - **Route Reflection**: Automatically extract routes from DUs via reflection
+- **Route Hydration**: Automatically extract route params and auth based on field types
 - **Pipeline Composition**: Railway-oriented programming for handler preconditions
 - **Error Handling**: Short-circuit on first error with custom error handling
 
@@ -31,35 +32,27 @@ type PostId = PostId of Guid
 
 ### 2. Define Routes as Discriminated Unions
 
-Use `[<Route>]` attributes on union cases. Use `Path = ""` for wrapper cases that group nested routes:
+Route fields define what each route needs - both route parameters AND auth requirements:
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 34-56
-
-// Convention-based routes (no attributes needed for common patterns)
+// Convention-based routes - fields define requirements
 type PostRoute =
-    | List                   // GET /posts (List → empty path)
-    | Detail of id: Guid     // GET /posts/{id} (path from field name)
-    | Create                 // POST /posts (Create → POST + empty path)
-    | Delete of id: Guid     // DELETE /posts/{id} (Delete → DELETE)
-    | Patch of id: Guid      // PATCH /posts/{id} (Patch → PATCH)
+    | List                        // GET /posts - no params
+    | Detail of id: Guid          // GET /posts/{id} - extracts id from route
+    | Create of UserId            // POST /posts - requires auth (UserId from pipeline)
+    | Delete of UserId * id: Guid // DELETE /posts/{id} - auth + route param
+    | Patch of UserId * id: Guid  // PATCH /posts/{id} - auth + route param
 
 // Explicit attributes for custom paths or overriding conventions
 type UserRoute =
-    | [<Route(Path = "{userId}")>] Profile of userId: Guid  // Custom param name
-    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: Guid  // PUT instead of convention
-    | [<Route(Path = "me")>] Me  // Custom static path
-
-// Mix of conventions and explicit attributes
-type ApiRoute =
-    | [<Route(RouteMethod.Any, Path = "webhook")>] Webhook  // Any HTTP method
-    | [<Route(Path = "v2/status")>] Status  // Custom nested path
+    | [<Route(Path = "{userId}")>] Profile of userId: Guid
+    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: Guid
+    | [<Route(Path = "me")>] Me
 
 type Route =
-    | Root                   // GET / (Root → empty path)
+    | Root                   // GET /
     | Posts of PostRoute     // nested under /posts
     | Users of UserRoute     // nested under /users
-    | Api of ApiRoute        // nested under /api
     | Health                 // GET /health
 ```
 
@@ -82,12 +75,9 @@ let toErrorResponse (error: AppError) : HttpHandler =
     | BadRequest msg -> Response.withStatusCode 400 >> Response.ofPlainText msg
 ```
 
-### 4. Define Pipelines
-
-Pipelines extract and validate data from HTTP requests, short-circuiting on the first error:
+### 4. Define Auth Pipeline
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 115-130
 /// Extract user from auth header (simplified example)
 let requireAuth: Pipeline<UserId, AppError> =
     fun ctx ->
@@ -97,56 +87,51 @@ let requireAuth: Pipeline<UserId, AppError> =
             | true, guid -> Ok(UserId guid)
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
-
-/// Require a post ID from route parameter
-let requirePostId: Pipeline<PostId, AppError> =
-    requireRouteId "id" PostId (BadRequest "Invalid post ID")
-
-/// Require a user ID from route parameter
-let requireUserId: Pipeline<UserId, AppError> =
-    requireRouteId "id" UserId (BadRequest "Invalid user ID")
 ```
 
-### 5. Map Routes to Handlers
+### 5. Create Route Hydration
 
-Use `Pipeline.run` for single pipelines, compose with `<&>` for multiple:
+`RouteHydration.create` automatically extracts fields based on their types:
+- Fields matching the auth type (`UserId`) use the auth pipeline
+- `Guid` fields are extracted from route params by field name
+- `string` and `int` fields work similarly
 
 ```fsharp
-// examples/ExampleApp/Program.fs lines 314-342
+// Hydrate PostRoute - extracts auth and route params automatically
+let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
+    RouteHydration.create<PostRoute, UserId, AppError> requireAuth BadRequest
+```
+
+### 6. Map Routes to Handlers
+
+The handler receives a fully hydrated route with all values populated:
+
+```fsharp
+// Handler receives hydrated route - exhaustive pattern matching!
+let handlePost (route: PostRoute) : HttpHandler =
+    match route with
+    | PostRoute.List -> Handlers.listPosts
+    | PostRoute.Detail id -> Handlers.getPost (PostId id)
+    | PostRoute.Create userId -> Handlers.createPost userId
+    | PostRoute.Delete(userId, id) -> Handlers.deletePost (userId, PostId id)
+    | PostRoute.Patch(userId, id) -> Handlers.patchPost (userId, PostId id)
+
+// Combined: hydrate then handle
+let postHandler (route: PostRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydratePost route) handlePost
+
+// Top-level router delegates to postHandler
 let routeHandler (route: Route) : HttpHandler =
     match route with
     | Route.Root -> Handlers.home
     | Route.Health -> Handlers.health
-
-    // Public routes - no authentication required
-    | Route.Posts PostRoute.List -> Handlers.listPosts
-
-    // Single pipeline - extract post ID
-    | Route.Posts(PostRoute.Detail _) -> Pipeline.run toErrorResponse requirePostId Handlers.getPost
-
-    // Single pipeline - require authentication
-    | Route.Posts PostRoute.Create -> Pipeline.run toErrorResponse requireAuth Handlers.createPost
-
-    // Composed pipelines - require both auth AND post ID
-    | Route.Posts(PostRoute.Delete _) ->
-        Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.deletePost
-    | Route.Posts(PostRoute.Patch _) ->
-        Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.patchPost
-
-    // User routes with different pipeline patterns
-    | Route.Users(UserRoute.Profile _) -> Pipeline.run toErrorResponse requireUserId Handlers.getProfile
-    | Route.Users(UserRoute.Update _) -> Pipeline.run toErrorResponse requireUserId Handlers.updateUser
-    | Route.Users UserRoute.Me -> Handlers.currentUser
-
-    // API routes - simple handlers
-    | Route.Api ApiRoute.Webhook -> Handlers.webhook
-    | Route.Api ApiRoute.Status -> Handlers.apiStatus
+    | Route.Posts postRoute -> postHandler postRoute
+    | Route.Users(UserRoute.Profile _) -> ...
 ```
 
-### 6. Convert to Falco Endpoints
+### 7. Convert to Falco Endpoints
 
 ```fsharp
-// examples/ExampleApp/Program.fs line 298
 let endpoints = RouteReflection.endpoints routeHandler
 ```
 
@@ -259,44 +244,31 @@ requireSome error optionValue            // Result<'T, 'E>
 requireSomeWith errorFn optionValue      // Result<'T, 'E>
 ```
 
-### TypedRoutes Builder (Servant-inspired)
+### Route Hydration
 
-For additional compile-time safety, use the builder-based `TypedRoutes` API. The pattern function's return type constrains the handler's parameter type - if they don't match, you get a compile error.
+Automatically extract route parameters and auth based on field types:
 
 ```fsharp
-// Pattern returns Guid option, so handler MUST accept Guid
-let postHandler: PostRoute -> HttpHandler =
-    typed<PostRoute, AppError> toErrorResponse
-    // Unit route - no parameters
-    |> route0 (function List -> true | _ -> false) listHandler
-    // Guid route - pattern return type constrains handler
-    |> routeGuid
-        (function Detail id -> Some id | _ -> None)  // Returns Guid option
-        "id"                                          // Route param name
-        (BadRequest "Invalid ID")                     // Error for invalid GUID
-        (fun id -> getPost (PostId id))              // Handler MUST accept Guid
-    // Guid + pipeline - combines route param with additional extraction (e.g., auth)
-    |> routeGuidWith
-        (function Delete id -> Some id | _ -> None)
-        "id"
-        (BadRequest "Invalid ID")
-        requireAuth                                   // Pipeline<UserId, AppError>
-        (fun (userId, id) -> deletePost userId id)   // Handler gets (UserId * Guid)
-    |> build
+// Create a hydrator for a route type
+// - 'Auth type fields use the auth pipeline
+// - Guid fields extract from route params by field name
+// - string/int fields work similarly
+RouteHydration.create<'Route, 'Auth, 'Error> authPipeline errorFactory
+    // Returns: 'Route -> Pipeline<'Route, 'Error>
 ```
 
-**Type Safety Guarantees:**
-- If pattern returns `Guid option`, handler must accept `Guid`
-- If pattern returns `string option`, handler must accept `string`
-- Mismatched types produce compile errors, not runtime errors
-
-Available builders:
+Example:
 ```fsharp
-route0 pattern handler           // No parameters
-routeGuid pattern name error handler      // Guid parameter
-routeGuidWith pattern name error pipeline handler  // Guid + pipeline
-routeString pattern name error handler    // String parameter
-routeInt pattern name error handler       // Int parameter
+type PostRoute =
+    | List                        // no extraction needed
+    | Detail of id: Guid          // extracts "id" from route
+    | Create of UserId            // uses auth pipeline
+    | Delete of UserId * id: Guid // auth + route param
+
+let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth BadRequest
+
+// Usage: hydrate route, then handle
+let postHandler route = Pipeline.run toError (hydratePost route) handlePost
 ```
 
 ## Why Use This?
@@ -317,11 +289,22 @@ let deletePost : HttpHandler = fun ctx -> task {
 }
 ```
 
-**After (declarative pipelines):**
+**After (route hydration):**
 ```fsharp
-// examples/ExampleApp/Program.fs lines 289-290
-| Route.Posts(PostRoute.Delete _) ->
-    Pipeline.run toErrorResponse (requireAuth <&> requirePostId) Handlers.deletePost
+// Route fields declare what's needed
+type PostRoute = Delete of UserId * id: Guid
+
+// Hydration extracts everything automatically
+let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth BadRequest
+
+// Handler receives fully populated values - exhaustive!
+let handlePost route =
+    match route with
+    | PostRoute.Delete(userId, id) -> Handlers.deletePost (userId, PostId id)
+    | ...
+
+// Combined
+let postHandler route = Pipeline.run toError (hydratePost route) handlePost
 ```
 
 ## License
