@@ -51,6 +51,10 @@ type ReleaseCommand =
     | PromoteToStable
     | ShowHelp
 
+type PublishMode =
+    | GitHubActions // Push tag to trigger CI/CD
+    | LocalPublish  // Publish to NuGet directly
+
 type ReleaseState =
     | FirstRelease
     | HasPreviousRelease of tag: string * currentVersion: Version
@@ -260,22 +264,22 @@ module Api =
 module Bump =
     type BumpResult = { NewVersion: Version; Reason: string }
 
+    let private isApiChanged = function Breaking _ | Addition _ -> true | NoChange -> false
+
     let fromApiChange (current: Version) (change: ApiChange) : BumpResult =
         match current.Stage with
+        | PreRelease(RC _) when isApiChanged change ->
+            { NewVersion = Version.toBeta current
+              Reason = "back to beta (API changed in RC)" }
         | PreRelease pre ->
-            match current.Stage, change with
-            | PreRelease(RC _), (Breaking _ | Addition _) ->
-                { NewVersion = Version.toBeta current
-                  Reason = "back to beta (API changed in RC)" }
-            | PreRelease pre, _ ->
-                { NewVersion =
-                    { current with
-                        Stage = PreRelease(Version.bumpPreRelease pre) }
-                  Reason =
-                    match pre with
-                    | Alpha _ -> "alpha"
-                    | Beta _ -> "beta"
-                    | RC _ -> "rc" }
+            { NewVersion =
+                { current with
+                    Stage = PreRelease(Version.bumpPreRelease pre) }
+              Reason =
+                match pre with
+                | Alpha _ -> "alpha"
+                | Beta _ -> "beta"
+                | RC _ -> "rc" }
         | Stable ->
             match change with
             | Breaking _ ->
@@ -359,6 +363,43 @@ module Git =
         Shell.runOrFail "git" (sprintf "push origin %s" tag) |> ignore
 
 // ============================================================================
+// NuGet Operations
+// ============================================================================
+
+module NuGet =
+    let artifactsDir = "artifacts"
+
+    let pack () =
+        if Directory.Exists(artifactsDir) then
+            Directory.Delete(artifactsDir, true)
+
+        Directory.CreateDirectory(artifactsDir) |> ignore
+
+        Shell.runOrFail
+            "dotnet"
+            (sprintf "pack %s -c Release -o %s" fsproj artifactsDir)
+        |> ignore
+
+        Directory.GetFiles(artifactsDir, "*.nupkg")
+        |> Array.tryHead
+        |> Option.defaultWith (fun () -> failwith "No .nupkg file found after pack")
+
+    let publish (nupkgPath: string) =
+        // Try NUGET_API_KEY first, then try without (relies on stored credentials)
+        let apiKey = Environment.GetEnvironmentVariable("NUGET_API_KEY") |> Option.ofObj
+
+        let pushArgs =
+            match apiKey with
+            | Some key ->
+                sprintf "nuget push %s --api-key %s --source https://api.nuget.org/v3/index.json --skip-duplicate" nupkgPath key
+            | None ->
+                printfn "No NUGET_API_KEY found, trying with stored credentials..."
+                printfn "(To set up: get key from https://www.nuget.org/account/apikeys)"
+                sprintf "nuget push %s --source https://api.nuget.org/v3/index.json --skip-duplicate" nupkgPath
+
+        Shell.runOrFail "dotnet" pushArgs |> ignore
+
+// ============================================================================
 // File Operations
 // ============================================================================
 
@@ -403,7 +444,7 @@ module UI =
         | NoChange -> printfn "\nNo API changes detected."
 
     let showHelp () =
-        printfn "Usage: mise run release [command]"
+        printfn "Usage: mise run release [command] [--publish]"
         printfn ""
         printfn "Automatic versioning based on API changes:"
         printfn "  MAJOR  - breaking changes (removed/changed APIs)"
@@ -416,6 +457,14 @@ module UI =
         printfn "  beta    - promote to beta"
         printfn "  rc      - promote to release candidate"
         printfn "  stable  - promote to stable release"
+        printfn ""
+        printfn "Options:"
+        printfn "  --publish  - publish to NuGet locally instead of pushing to GitHub"
+        printfn ""
+        printfn "For --publish, set NUGET_API_KEY environment variable:"
+        printfn "  1. Get key from https://www.nuget.org/account/apikeys"
+        printfn "  2. export NUGET_API_KEY=\"your-key\"  (add to ~/.zshrc)"
+        printfn "  Or: NUGET_API_KEY=\"key\" mise run release --publish"
 
 // ============================================================================
 // Command Parsing
@@ -432,6 +481,21 @@ let parseCommand =
     | "" -> Auto
     | other -> failwithf "Unknown command: %s" other
 
+let parseArgs (argv: string array) : ReleaseCommand * PublishMode =
+    let args = argv |> Array.toList
+
+    let hasPublish = args |> List.contains "--publish"
+
+    let cmdArgs =
+        args
+        |> List.filter (fun a -> a <> "--publish")
+        |> List.tryHead
+        |> Option.defaultValue ""
+
+    let cmd = parseCommand cmdArgs
+    let mode = if hasPublish then LocalPublish else GitHubActions
+    (cmd, mode)
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -442,7 +506,7 @@ type ReleaseOutcome =
     | NeedsExplicitCommand of message: string
     | HelpShown
 
-let release (cmd: ReleaseCommand) : ReleaseOutcome =
+let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
     match cmd with
     | ShowHelp ->
         UI.showHelp ()
@@ -484,6 +548,10 @@ let release (cmd: ReleaseCommand) : ReleaseOutcome =
             printfn "\nVersion bump: %s" bump.Reason
             printfn "New version: %s" (Version.format bump.NewVersion)
 
+            match mode with
+            | LocalPublish -> printfn "Mode: local publish to NuGet"
+            | GitHubActions -> printfn "Mode: push to GitHub Actions"
+
             if not (UI.promptYesNo "Continue?") then
                 Aborted
             else
@@ -491,19 +559,37 @@ let release (cmd: ReleaseCommand) : ReleaseOutcome =
                 let tag = Git.commitAndTag bump.NewVersion
                 printfn "Created tag %s" tag
 
-                if UI.promptYesNo "\nPush to trigger release?" then
-                    Git.push tag
-                    printfn "\nPushed! %s/actions" repoUrl
-                else
-                    printfn "\nTo push: git push origin HEAD && git push origin %s" tag
+                match mode with
+                | LocalPublish ->
+                    printfn "\nPacking..."
+                    let nupkgPath = NuGet.pack ()
+                    printfn "Created %s" nupkgPath
+
+                    if UI.promptYesNo "\nPublish to NuGet.org?" then
+                        printfn "Publishing..."
+                        NuGet.publish nupkgPath
+                        printfn "\nPublished to NuGet.org!"
+
+                        if UI.promptYesNo "Also push tag to GitHub?" then
+                            Git.push tag
+                            printfn "Pushed tag %s" tag
+                    else
+                        printfn "\nTo publish later: dotnet nuget push %s --source https://api.nuget.org/v3/index.json" nupkgPath
+
+                | GitHubActions ->
+                    if UI.promptYesNo "\nPush to trigger release?" then
+                        Git.push tag
+                        printfn "\nPushed! %s/actions" repoUrl
+                    else
+                        printfn "\nTo push: git push origin HEAD && git push origin %s" tag
 
                 Released tag
 
 let main (argv: string array) =
     try
-        let cmd = parseCommand (if argv.Length > 0 then argv.[0] else "")
+        let (cmd, mode) = parseArgs argv
 
-        match release cmd with
+        match release cmd mode with
         | Released _ -> 0
         | Aborted ->
             printfn "Aborted."
