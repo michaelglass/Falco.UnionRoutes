@@ -3,24 +3,22 @@
 Define your routes as F# discriminated unions. Get exhaustive pattern matching, type-safe links, and automatic parameter extraction.
 
 ```fsharp
-type Route =
-    | Home
-    | Posts of PostRoute
-
 type PostRoute =
     | List of page: Query<int> option
     | Detail of id: PostId
     | Create of Pre<UserId>
+
+let handle route : HttpHandler =
+    match route with
+    | List page -> Response.ofJson (getPosts page)
+    | Detail postId -> Response.ofJson (getPost postId)
+    | Create (Pre userId) -> Response.ofJson (createPost userId)
 ```
 
 **What you get:**
 - Compiler enforces you handle every route
-- `RouteReflection.link (Posts (Detail postId))` → `"/posts/abc-123"` (type-checked)
+- `RouteReflection.link (Detail postId)` → `"/posts/abc-123"` (type-checked)
 - Route/query params and auth automatically extracted based on field types
-
-**What it costs:**
-- Reflection at app startup to enumerate routes
-- Marker types (`Pre<>`, `Query<>`) to learn
 
 ## Installation
 
