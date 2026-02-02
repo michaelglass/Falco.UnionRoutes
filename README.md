@@ -4,15 +4,15 @@ Define your routes as F# discriminated unions. Get exhaustive pattern matching, 
 
 ```fsharp
 type PostRoute =
-    | List of page: Query<int> option
+    | List of page: QueryParam<int> option
     | Detail of id: PostId
-    | Create of Pre<UserId>
+    | Create of PreCondition<UserId>
 
 let handle route : HttpHandler =
     match route with
     | List page -> Response.ofJson (getPosts page)
     | Detail postId -> Response.ofJson (getPost postId)
-    | Create (Pre userId) -> Response.ofJson (createPost userId)
+    | Create (PreCondition userId) -> Response.ofJson (createPost userId)
 ```
 
 **What you get:**
@@ -41,10 +41,10 @@ type PostRoute =
 Special marker types change where values come from:
 
 ```fsharp
-| Search of query: Query<string>            // GET /posts/search?query=hello
-| Search of q: Query<string> option         // optional query param
-| Create of Pre<UserId>                     // UserId from auth pipeline, not URL
-| Edit of Pre<UserId> * id: Guid            // auth + route param
+| Search of query: QueryParam<string>            // GET /posts/search?query=hello
+| Search of q: QueryParam<string> option         // optional query param
+| Create of PreCondition<UserId>                     // UserId from auth pipeline, not URL
+| Edit of PreCondition<UserId> * id: Guid            // auth + route param
 ```
 
 Single-case wrapper DUs are auto-unwrapped:
@@ -65,7 +65,7 @@ type Route =
 type PostRoute =
     | List
     | Detail of id: PostId
-    | Create of Pre<UserId>
+    | Create of PreCondition<UserId>
 
 // 2. Create hydration (extracts params + runs auth)
 let authPrecondition () = RouteHydration.forPre<UserId, AppError> requireAuth
@@ -77,7 +77,7 @@ let handlePost route : HttpHandler =
     match route with
     | List -> Response.ofJson posts
     | Detail postId -> Response.ofJson (loadPost postId)
-    | Create (Pre userId) -> Response.ofJson (createPost userId)
+    | Create (PreCondition userId) -> Response.ofJson (createPost userId)
 
 // 4. Wire up
 let postHandler route = Pipeline.run toError (hydratePost route) handlePost
@@ -108,9 +108,9 @@ Override with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
 
 | Type | Source | Example |
 |------|--------|---------|
-| `Query<'T>` | Query string | `?page=2` |
-| `Query<'T> option` | Optional query | missing → `None` |
-| `Pre<'T>` | Precondition pipeline | auth, validation |
+| `QueryParam<'T>` | Query string | `?page=2` |
+| `QueryParam<'T> option` | Optional query | missing → `None` |
+| `PreCondition<'T>` | Precondition pipeline | auth, validation |
 
 ### Key Functions
 
@@ -120,7 +120,7 @@ RouteReflection.link route            // Type-safe URL: "/posts/abc-123"
 RouteReflection.allRoutes<Route>()    // Enumerate all routes
 
 RouteHydration.create [preconditions] [extractors] makeError combineErrors
-RouteHydration.forPre<'T,'E> pipeline // Create precondition for Pre<'T>
+RouteHydration.forPre<'T,'E> pipeline // Create precondition for PreCondition<'T>
 
 Pipeline.run toError pipeline handler // Execute with error handling
 pipeline1 <&> pipeline2               // Combine pipelines
