@@ -98,81 +98,81 @@ module RouteHydration =
 
         FSharpValue.MakeUnion(noneCase, [||])
 
-    /// Extracts a primitive value (Guid, string, int) from route parameters.
+    /// Source of parameter values (route or query string)
+    type private ParamSource =
+        | Route
+        | QueryString
+
+    /// Tries to parse a string value into a primitive type.
+    /// Returns Ok value, Error for invalid format, or None if type not supported.
+    let private tryParsePrimitive (primitiveType: Type) (value: string) (fieldName: string) (source: ParamSource) =
+        let sourceName =
+            match source with
+            | Route -> "route"
+            | QueryString -> "query"
+
+        if primitiveType = typeof<Guid> then
+            match Guid.TryParse(value) with
+            | true, guid -> Some(Ok(box guid))
+            | false, _ -> Some(Error $"Invalid GUID {sourceName} parameter: {fieldName}")
+        elif primitiveType = typeof<string> then
+            Some(Ok(box value))
+        elif primitiveType = typeof<int> then
+            match Int32.TryParse(value) with
+            | true, i -> Some(Ok(box i))
+            | false, _ -> Some(Error $"Invalid integer {sourceName} parameter: {fieldName}")
+        elif primitiveType = typeof<int64> then
+            match Int64.TryParse(value) with
+            | true, i -> Some(Ok(box i))
+            | false, _ -> Some(Error $"Invalid int64 {sourceName} parameter: {fieldName}")
+        elif primitiveType = typeof<bool> then
+            match Boolean.TryParse(value) with
+            | true, b -> Some(Ok(box b))
+            | false, _ -> Some(Error $"Invalid boolean {sourceName} parameter: {fieldName}")
+        else
+            None
+
+    /// Gets a string value from route parameters.
+    /// Reads directly from RouteValues to avoid Falco's GetString which converts large numbers to scientific notation.
+    let private getRouteString (ctx: HttpContext) (fieldName: string) : string =
+        match ctx.Request.RouteValues.TryGetValue(fieldName) with
+        | true, value when not (isNull value) -> value.ToString()
+        | _ -> ""
+
+    /// Extracts a primitive value from a parameter source.
     /// Returns Ok value, Error for invalid, or None if missing (for optional handling).
-    let private tryExtractPrimitiveFromRoute
+    let private tryExtractPrimitive
+        (source: ParamSource)
         (fieldName: string)
         (primitiveType: Type)
         (ctx: HttpContext)
         : Result<obj, string> option =
 
-        let route = Request.getRoute ctx
+        let value =
+            match source with
+            | Route -> getRouteString ctx fieldName
+            | QueryString -> (Request.getQuery ctx).GetString fieldName
 
-        if primitiveType = typeof<Guid> then
-            let value = route.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None // Missing
-            else
-                match Guid.TryParse(value) with
-                | true, guid -> Some(Ok(box guid))
-                | false, _ -> Some(Error $"Invalid GUID route parameter: {fieldName}")
-        elif primitiveType = typeof<string> then
-            let value = route.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None // Missing
-            else
-                Some(Ok(box value))
-        elif primitiveType = typeof<int> then
-            let value = route.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None // Missing
-            else
-                match Int32.TryParse(value) with
-                | true, i -> Some(Ok(box i))
-                | false, _ -> Some(Error $"Invalid integer route parameter: {fieldName}")
+        if String.IsNullOrEmpty(value) then
+            None // Missing
         else
-            Some(Error $"Unsupported primitive type: {primitiveType.Name}")
+            match tryParsePrimitive primitiveType value fieldName source with
+            | Some result -> Some result
+            | None ->
+                let sourceName =
+                    match source with
+                    | Route -> "route"
+                    | QueryString -> "query"
+
+                Some(Error $"Unsupported primitive type for {sourceName}: {primitiveType.Name}")
+
+    /// Extracts a primitive value from route parameters.
+    let private tryExtractPrimitiveFromRoute fieldName primitiveType ctx =
+        tryExtractPrimitive Route fieldName primitiveType ctx
 
     /// Extracts a primitive value from query string.
-    /// Returns Ok value, Error for invalid, or None if missing (for optional handling).
-    let private tryExtractPrimitiveFromQuery
-        (fieldName: string)
-        (primitiveType: Type)
-        (ctx: HttpContext)
-        : Result<obj, string> option =
-
-        let query = Request.getQuery ctx
-
-        if primitiveType = typeof<Guid> then
-            let value = query.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None
-            else
-                match Guid.TryParse(value) with
-                | true, guid -> Some(Ok(box guid))
-                | false, _ -> Some(Error $"Invalid GUID query parameter: {fieldName}")
-        elif primitiveType = typeof<string> then
-            let value = query.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None
-            else
-                Some(Ok(box value))
-        elif primitiveType = typeof<int> then
-            let value = query.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                None
-            else
-                match Int32.TryParse(value) with
-                | true, i -> Some(Ok(box i))
-                | false, _ -> Some(Error $"Invalid integer query parameter: {fieldName}")
-        else
-            Some(Error $"Unsupported primitive type for query: {primitiveType.Name}")
+    let private tryExtractPrimitiveFromQuery fieldName primitiveType ctx =
+        tryExtractPrimitive QueryString fieldName primitiveType ctx
 
     /// Tries custom extractors in order, returning the first successful extraction.
     let private tryCustomExtractors
@@ -206,11 +206,13 @@ module RouteHydration =
                 | Some(Error msg) -> Error msg
                 | None -> Error $"Missing query parameter: {fieldName}"
             | None ->
-                // Check for primitives
+                // Check for primitives (Guid, string, int, int64, bool)
                 if
                     fieldType = typeof<Guid>
                     || fieldType = typeof<string>
                     || fieldType = typeof<int>
+                    || fieldType = typeof<int64>
+                    || fieldType = typeof<bool>
                 then
                     tryExtractPrimitiveFromRoute fieldName fieldType ctx
                     |> Option.defaultValue (Error $"Missing route parameter: {fieldName}")
