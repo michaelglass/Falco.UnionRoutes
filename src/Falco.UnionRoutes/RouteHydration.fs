@@ -255,8 +255,7 @@ module RouteHydration =
             extractRequired extractors fieldName fieldType ctx
 
     /// Creates a hydration function for a route type with custom extractors.
-    /// Auth errors are returned with their original type.
-    /// Extraction errors (route/query params) are accumulated and combined using makeErrors.
+    /// All errors are accumulated and combined using combineErrors.
     ///
     /// The hydration function examines the route case and extracts values for each field:
     /// - Fields matching 'Auth type use the provided auth pipeline (errors preserve type)
@@ -267,10 +266,16 @@ module RouteHydration =
     /// - Single-case DU wrappers (like PostId of Guid) are auto-detected
     /// - Query<'T> extracts from query string
     /// - Query<'T> option for optional query params
+    ///
+    /// Error handling:
+    /// - Extraction errors (strings) are converted to 'Error via makeError
+    /// - All errors (auth and extraction) are accumulated
+    /// - Combined into final error via combineErrors
     let createWith<'Route, 'Auth, 'Error>
         (extractors: TypeExtractor list)
         (authPipeline: Pipeline<'Auth, 'Error>)
-        (makeErrors: string list -> 'Error)
+        (makeError: string -> 'Error)
+        (combineErrors: 'Error list -> 'Error)
         : 'Route -> Pipeline<'Route, 'Error> =
 
         let routeType = typeof<'Route>
@@ -296,58 +301,79 @@ module RouteHydration =
                         else
                             Ok(box ()) // Placeholder, won't be used
 
-                    match authResult with
-                    | Error authError ->
-                        // Auth failed - return the original error type directly
-                        Error authError
-                    | Ok authValue ->
-                        // Auth succeeded (or not needed) - extract other fields
-                        let extractedValues =
-                            fields
-                            |> Array.map (fun field ->
+                    // Extract all non-auth fields (regardless of auth result, for error accumulation)
+                    let extractedNonAuthValues =
+                        fields
+                        |> Array.map (fun field ->
+                            if field.PropertyType = authType then
+                                None // Will be filled from authResult
+                            else
+                                Some(extractNonAuthField extractors field.Name field.PropertyType ctx))
+
+                    // Collect extraction errors and convert to 'Error
+                    let extractionErrors =
+                        extractedNonAuthValues
+                        |> Array.choose (function
+                            | Some(Error e) -> Some(makeError e)
+                            | _ -> None)
+                        |> Array.toList
+
+                    // Collect auth error if any
+                    let authErrors =
+                        match authResult with
+                        | Error e -> [ e ]
+                        | Ok _ -> []
+
+                    // Combine all errors
+                    let allErrors = authErrors @ extractionErrors
+
+                    if allErrors.Length > 0 then
+                        Error(combineErrors allErrors)
+                    else
+                        // All succeeded - construct the hydrated route
+                        let authValue =
+                            match authResult with
+                            | Ok v -> v
+                            | Error _ -> failwith "Impossible: checked for errors above"
+
+                        let values =
+                            (fields, extractedNonAuthValues)
+                            ||> Array.map2 (fun field extracted ->
                                 if field.PropertyType = authType then
-                                    // Use the already-extracted auth value
-                                    Ok authValue
+                                    authValue
                                 else
-                                    extractNonAuthField extractors field.Name field.PropertyType ctx)
+                                    match extracted with
+                                    | Some(Ok v) -> v
+                                    | _ -> failwith "Impossible: checked for errors above")
 
-                        // Collect extraction errors (strings)
-                        let errors =
-                            extractedValues
-                            |> Array.choose (function
-                                | Error e -> Some e
-                                | Ok _ -> None)
-                            |> Array.toList
-
-                        if errors.Length > 0 then
-                            Error(makeErrors errors)
-                        else
-                            // All succeeded - construct the hydrated route
-                            let values =
-                                extractedValues
-                                |> Array.map (function
-                                    | Ok v -> v
-                                    | Error _ -> failwith "Impossible: checked for errors above")
-
-                            let hydrated = FSharpValue.MakeUnion(caseInfo, values) :?> 'Route
-                            Ok hydrated
+                        let hydrated = FSharpValue.MakeUnion(caseInfo, values) :?> 'Route
+                        Ok hydrated
 
     /// Creates a hydration function for a route type.
-    /// Collects all validation errors and combines them using makeErrors.
+    /// All errors are accumulated and combined using combineErrors.
     let create<'Route, 'Auth, 'Error>
         (authPipeline: Pipeline<'Auth, 'Error>)
-        (makeErrors: string list -> 'Error)
+        (makeError: string -> 'Error)
+        (combineErrors: 'Error list -> 'Error)
         : 'Route -> Pipeline<'Route, 'Error> =
-        createWith [] authPipeline makeErrors
+        createWith [] authPipeline makeError combineErrors
 
     /// Creates a hydration function for routes that don't need authentication.
     /// Only extracts route parameters (Guid, string, int, wrapper types, and Query<'T>).
-    let createNoAuth<'Route, 'Error> (makeErrors: string list -> 'Error) : 'Route -> Pipeline<'Route, 'Error> =
-        createWith<'Route, unit, 'Error> [] (fun _ -> Error(makeErrors [ "No auth configured" ])) makeErrors
+    let createNoAuth<'Route, 'Error>
+        (makeError: string -> 'Error)
+        (combineErrors: 'Error list -> 'Error)
+        : 'Route -> Pipeline<'Route, 'Error> =
+        createWith<'Route, unit, 'Error> [] (fun _ -> Error(makeError "No auth configured")) makeError combineErrors
 
     /// Creates a hydration function with custom extractors but no authentication.
     let createNoAuthWith<'Route, 'Error>
         (extractors: TypeExtractor list)
-        (makeErrors: string list -> 'Error)
+        (makeError: string -> 'Error)
+        (combineErrors: 'Error list -> 'Error)
         : 'Route -> Pipeline<'Route, 'Error> =
-        createWith<'Route, unit, 'Error> extractors (fun _ -> Error(makeErrors [ "No auth configured" ])) makeErrors
+        createWith<'Route, unit, 'Error>
+            extractors
+            (fun _ -> Error(makeError "No auth configured"))
+            makeError
+            combineErrors

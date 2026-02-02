@@ -94,20 +94,26 @@ let mockAuth () : Pipeline<UserId, TestError> =
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
 
-/// Helper to combine error messages into a BadRequest
-let combineErrors (msgs: string list) = BadRequest(String.concat "; " msgs)
+/// Convert extraction error string to TestError
+let makeError (msg: string) = BadRequest msg
+
+/// Combine multiple errors - preserves structure for pattern matching
+let combineErrors (errors: TestError list) =
+    match errors with
+    | [ single ] -> single
+    | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
 let hydrate () =
-    RouteHydration.create<SimpleRoute, UserId, TestError> (mockAuth ()) combineErrors
+    RouteHydration.create<SimpleRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
 
 let hydrateString () =
-    RouteHydration.create<StringRoute, UserId, TestError> (mockAuth ()) combineErrors
+    RouteHydration.create<StringRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
 
 let hydrateInt () =
-    RouteHydration.create<IntRoute, UserId, TestError> (mockAuth ()) combineErrors
+    RouteHydration.create<IntRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
 
 let hydrateWrapper () =
-    RouteHydration.create<WrapperRoute, UserId, TestError> (mockAuth ()) combineErrors
+    RouteHydration.create<WrapperRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
 
 // Custom extractor for Slug type
 let slugExtractor: TypeExtractor =
@@ -124,19 +130,23 @@ let slugExtractor: TypeExtractor =
             None
 
 let hydrateCustom () =
-    RouteHydration.createWith<CustomTypeRoute, UserId, TestError> [ slugExtractor ] (mockAuth ()) combineErrors
+    RouteHydration.createWith<CustomTypeRoute, UserId, TestError>
+        [ slugExtractor ]
+        (mockAuth ())
+        makeError
+        combineErrors
 
 let hydrateNoAuth () =
-    RouteHydration.createNoAuth<NoAuthRoute, TestError> combineErrors
+    RouteHydration.createNoAuth<NoAuthRoute, TestError> makeError combineErrors
 
 let hydrateNoAuthWithCustom () =
-    RouteHydration.createNoAuthWith<CustomTypeRoute, TestError> [ slugExtractor ] combineErrors
+    RouteHydration.createNoAuthWith<CustomTypeRoute, TestError> [ slugExtractor ] makeError combineErrors
 
 let hydrateQuery () =
-    RouteHydration.createNoAuth<QueryRoute, TestError> combineErrors
+    RouteHydration.createNoAuth<QueryRoute, TestError> makeError combineErrors
 
 let hydrateMultiField () =
-    RouteHydration.createNoAuth<MultiFieldRoute, TestError> combineErrors
+    RouteHydration.createNoAuth<MultiFieldRoute, TestError> makeError combineErrors
 
 // =============================================================================
 // Unit route tests (no fields)

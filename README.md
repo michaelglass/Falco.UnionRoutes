@@ -95,15 +95,21 @@ let requireAuth: Pipeline<UserId, AppError> =
 - Fields matching the auth type (`UserId`) use the auth pipeline
 - `Guid` fields are extracted from route params by field name
 - `string` and `int` fields work similarly
-- All errors are accumulated and combined via the `makeErrors` function
+- All errors are accumulated for proper pattern matching
 
 ```fsharp
-/// Combine validation errors into a single BadRequest
-let combineErrors (msgs: string list) = BadRequest(String.concat "; " msgs)
+/// Convert extraction error string to AppError
+let makeError (msg: string) = BadRequest msg
+
+/// Combine multiple errors - preserves structure for pattern matching
+let combineErrors (errors: AppError list) =
+    match errors with
+    | [ single ] -> single  // Single error preserved as-is (e.g., NotAuthenticated)
+    | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
 // Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
-    RouteHydration.create<PostRoute, UserId, AppError> requireAuth combineErrors
+    RouteHydration.create<PostRoute, UserId, AppError> requireAuth makeError combineErrors
 ```
 
 ### 6. Map Routes to Handlers
@@ -260,16 +266,16 @@ Automatically extract route parameters and auth based on field types:
 // - Single-case DU wrappers (PostId of Guid) are auto-detected
 // - Query<'T> option returns None when missing instead of error
 // - Query<'T> extracts from query string instead of route
-// - Extraction errors are accumulated and combined via makeErrors
-RouteHydration.create<'Route, 'Auth, 'Error> authPipeline makeErrors
+// - All errors accumulated for pattern matching
+RouteHydration.create<'Route, 'Auth, 'Error> authPipeline makeError combineErrors
     // Returns: 'Route -> Pipeline<'Route, 'Error>
 
 // For routes without auth
-RouteHydration.createNoAuth<'Route, 'Error> makeErrors
+RouteHydration.createNoAuth<'Route, 'Error> makeError combineErrors
 
 // With custom type extractors
-RouteHydration.createWith<'Route, 'Auth, 'Error> [customExtractor] authPipeline makeErrors
-RouteHydration.createNoAuthWith<'Route, 'Error> [customExtractor] makeErrors
+RouteHydration.createWith<'Route, 'Auth, 'Error> [customExtractor] authPipeline makeError combineErrors
+RouteHydration.createNoAuthWith<'Route, 'Error> [customExtractor] makeError combineErrors
 ```
 
 Example:
@@ -281,10 +287,16 @@ type PostRoute =
     | Delete of UserId * id: PostId   // auth + route param
     | Search of query: Query<string>  // required query param - /search?query=...
 
-/// Combine extraction errors into a single BadRequest
-let combineErrors (msgs: string list) = BadRequest(String.concat "; " msgs)
+/// Convert extraction error string to AppError
+let makeError (msg: string) = BadRequest msg
 
-let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth combineErrors
+/// Combine errors - preserves structure for pattern matching
+let combineErrors (errors: AppError list) =
+    match errors with
+    | [ single ] -> single  // NotAuthenticated stays NotAuthenticated
+    | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
+
+let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth makeError combineErrors
 
 // Usage: hydrate route, then handle
 let postHandler route = Pipeline.run toError (hydratePost route) handlePost
@@ -311,7 +323,7 @@ Extend hydration with custom types:
 type Slug = Slug of string
 
 /// Custom extractor - returns Some if it handles the type, None to defer
-/// Uses string errors (accumulated with other extraction errors)
+/// Uses string errors (converted via makeError and accumulated)
 let slugExtractor: TypeExtractor =
     fun fieldName fieldType ctx ->
         if fieldType = typeof<Slug> then
@@ -325,8 +337,9 @@ let slugExtractor: TypeExtractor =
             None  // Can't handle, try next extractor
 
 // Use with createWith or createNoAuthWith
-let combineErrors msgs = BadRequest(String.concat "; " msgs)
-let hydrateApi = RouteHydration.createNoAuthWith [slugExtractor] combineErrors
+let makeError msg = BadRequest msg
+let combineErrors errors = match errors with [e] -> e | es -> BadRequest(es |> List.map string |> String.concat "; ")
+let hydrateApi = RouteHydration.createNoAuthWith [slugExtractor] makeError combineErrors
 ```
 
 ## Why Use This?
@@ -353,9 +366,10 @@ let deletePost : HttpHandler = fun ctx -> task {
 type PostRoute = Delete of UserId * id: Guid
 
 // Hydration extracts everything automatically
-// Auth errors preserve type (NotAuthenticated), extraction errors get combined
-let combineErrors msgs = BadRequest(String.concat "; " msgs)
-let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth combineErrors
+// Auth errors preserve type, extraction errors converted via makeError, all combined
+let makeError msg = BadRequest msg
+let combineErrors errors = match errors with [e] -> e | es -> BadRequest(es |> List.map string |> String.concat "; ")
+let hydratePost = RouteHydration.create<PostRoute, UserId, AppError> requireAuth makeError combineErrors
 
 // Handler receives fully populated values - exhaustive!
 let handlePost route =
@@ -363,8 +377,9 @@ let handlePost route =
     | PostRoute.Delete(userId, id) -> Handlers.deletePost (userId, PostId id)
     | ...
 
-// Combined
+// Combined - pattern match on errors works properly!
 let postHandler route = Pipeline.run toError (hydratePost route) handlePost
+// e.g., match error with NotAuthenticated -> ... | BadRequest msg -> ...
 ```
 
 ## License

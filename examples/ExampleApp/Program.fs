@@ -145,21 +145,27 @@ let requireAuth: Pipeline<UserId, AppError> =
 // 6b. Route Hydration
 // =============================================================================
 // RouteHydration.create automatically extracts fields based on their types:
-// - UserId fields use the auth pipeline
+// - UserId fields use the auth pipeline (auth errors preserve their type)
 // - Guid fields are extracted from route params by field name
 // - Custom extractors can handle domain-specific types like Slug
-// - Errors are accumulated and combined via makeErrors function
+// - All errors are accumulated and combined via combineErrors function
 
-/// Combine validation errors into a single BadRequest
-let combineErrors (msgs: string list) = BadRequest(String.concat "; " msgs)
+/// Convert extraction error string to AppError
+let makeError (msg: string) = BadRequest msg
+
+/// Combine multiple errors - preserves structure for pattern matching
+let combineErrors (errors: AppError list) =
+    match errors with
+    | [ single ] -> single // Single error preserved as-is
+    | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
 /// Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
-    RouteHydration.create<PostRoute, UserId, AppError> requireAuth combineErrors
+    RouteHydration.create<PostRoute, UserId, AppError> requireAuth makeError combineErrors
 
 /// Hydrate UserRoute - no auth needed, just extracts route params
 let hydrateUser: UserRoute -> Pipeline<UserRoute, AppError> =
-    RouteHydration.createNoAuth<UserRoute, AppError> combineErrors
+    RouteHydration.createNoAuth<UserRoute, AppError> makeError combineErrors
 
 /// Custom extractor for Slug type - demonstrates extensibility
 let slugExtractor: TypeExtractor =
@@ -177,7 +183,7 @@ let slugExtractor: TypeExtractor =
 
 /// Hydrate ApiRoute - uses custom extractor for Slug type
 let hydrateApi: ApiRoute -> Pipeline<ApiRoute, AppError> =
-    RouteHydration.createNoAuthWith<ApiRoute, AppError> [ slugExtractor ] combineErrors
+    RouteHydration.createNoAuthWith<ApiRoute, AppError> [ slugExtractor ] makeError combineErrors
 
 // =============================================================================
 // 7. Handlers
