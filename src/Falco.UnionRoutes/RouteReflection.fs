@@ -95,8 +95,7 @@ module RouteReflection =
             None // Nested route union, not a path parameter
         else
             // Filter out non-route fields (nested unions, preconditions, query params)
-            let pathFields =
-                fields |> Array.filter (fun f -> not (isNonRouteField f))
+            let pathFields = fields |> Array.filter (fun f -> not (isNonRouteField f))
 
             if pathFields.Length = 0 then
                 None
@@ -109,8 +108,7 @@ module RouteReflection =
     /// Check if a case has any route path fields (i.e., typed arguments like "of id: Guid")
     /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
     let private hasRoutePathFields (case: UnionCaseInfo) : bool =
-        case.GetFields()
-        |> Array.exists (fun f -> not (isNonRouteField f))
+        case.GetFields() |> Array.exists (fun f -> not (isNonRouteField f))
 
     /// Get path segment from a case (uses attribute Path if set, otherwise infers from fields or case name)
     /// Special cases for empty path: "Root", "List", "Create"

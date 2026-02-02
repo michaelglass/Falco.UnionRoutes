@@ -30,12 +30,11 @@ type VersionStage =
     | PreRelease of PreRelease
     | Stable
 
-type Version = {
-    Major: int
-    Minor: int
-    Patch: int
-    Stage: VersionStage
-}
+type Version =
+    { Major: int
+      Minor: int
+      Patch: int
+      Stage: VersionStage }
 
 type ApiSignature = ApiSignature of string
 
@@ -74,8 +73,9 @@ module Shell =
         let output = p.StandardOutput.ReadToEnd()
         let error = p.StandardError.ReadToEnd()
         p.WaitForExit()
+
         if p.ExitCode = 0 then
-            Success (output.Trim())
+            Success(output.Trim())
         else
             Failure error
 
@@ -106,42 +106,74 @@ module Version =
             if parts.Length > 1 then
                 let pre = parts.[1]
                 let numMatch = Regex.Match(pre, @"(\d+)$")
-                let num = if numMatch.Success then int numMatch.Groups.[1].Value else 1
-                if pre.StartsWith("alpha") then PreRelease (Alpha num)
-                elif pre.StartsWith("beta") then PreRelease (Beta num)
-                elif pre.StartsWith("rc") then PreRelease (RC num)
+
+                let num =
+                    if numMatch.Success then
+                        int numMatch.Groups.[1].Value
+                    else
+                        1
+
+                if pre.StartsWith("alpha") then PreRelease(Alpha num)
+                elif pre.StartsWith("beta") then PreRelease(Beta num)
+                elif pre.StartsWith("rc") then PreRelease(RC num)
                 else Stable
             else
                 Stable
 
-        { Major = major; Minor = minor; Patch = patch; Stage = stage }
+        { Major = major
+          Minor = minor
+          Patch = patch
+          Stage = stage }
 
     let format (v: Version) : string =
         let base' = sprintf "%d.%d.%d" v.Major v.Minor v.Patch
+
         match v.Stage with
-        | PreRelease (Alpha n) -> sprintf "%s-alpha.%d" base' n
-        | PreRelease (Beta n) -> sprintf "%s-beta.%d" base' n
-        | PreRelease (RC n) -> sprintf "%s-rc.%d" base' n
+        | PreRelease(Alpha n) -> sprintf "%s-alpha.%d" base' n
+        | PreRelease(Beta n) -> sprintf "%s-beta.%d" base' n
+        | PreRelease(RC n) -> sprintf "%s-rc.%d" base' n
         | Stable -> base'
 
     let toTag (v: Version) : string = sprintf "v%s" (format v)
 
-    let firstAlpha = { Major = 0; Minor = 1; Patch = 0; Stage = PreRelease (Alpha 1) }
+    let firstAlpha =
+        { Major = 0
+          Minor = 1
+          Patch = 0
+          Stage = PreRelease(Alpha 1) }
 
-    let bumpPreRelease = function
-        | Alpha n -> Alpha (n + 1)
-        | Beta n -> Beta (n + 1)
-        | RC n -> RC (n + 1)
+    let bumpPreRelease =
+        function
+        | Alpha n -> Alpha(n + 1)
+        | Beta n -> Beta(n + 1)
+        | RC n -> RC(n + 1)
 
     let nextAlphaCycle v =
-        { v with Minor = v.Minor + 1; Patch = 0; Stage = PreRelease (Alpha 1) }
+        { v with
+            Minor = v.Minor + 1
+            Patch = 0
+            Stage = PreRelease(Alpha 1) }
 
-    let toBeta v = { v with Stage = PreRelease (Beta 1) }
-    let toRC v = { v with Stage = PreRelease (RC 1) }
+    let toBeta v = { v with Stage = PreRelease(Beta 1) }
+    let toRC v = { v with Stage = PreRelease(RC 1) }
     let toStable v = { v with Stage = Stable }
-    let bumpPatch v = { v with Patch = v.Patch + 1; Stage = Stable }
-    let bumpMinor v = { v with Minor = v.Minor + 1; Patch = 0; Stage = Stable }
-    let bumpMajor v = { Major = v.Major + 1; Minor = 0; Patch = 0; Stage = Stable }
+
+    let bumpPatch v =
+        { v with
+            Patch = v.Patch + 1
+            Stage = Stable }
+
+    let bumpMinor v =
+        { v with
+            Minor = v.Minor + 1
+            Patch = 0
+            Stage = Stable }
+
+    let bumpMajor v =
+        { Major = v.Major + 1
+          Minor = 0
+          Patch = 0
+          Stage = Stable }
 
 // ============================================================================
 // API Extraction and Comparison
@@ -151,29 +183,44 @@ module Api =
     let private extractFromAssembly (dllPath: string) : ApiSignature list =
         try
             let assembly = Assembly.LoadFrom(dllPath)
+
             assembly.GetExportedTypes()
             |> Array.collect (fun t ->
                 let typeSig = sprintf "type %s" t.FullName
+
                 let memberSigs =
-                    t.GetMembers(BindingFlags.Public ||| BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.DeclaredOnly)
+                    t.GetMembers(
+                        BindingFlags.Public
+                        ||| BindingFlags.Instance
+                        ||| BindingFlags.Static
+                        ||| BindingFlags.DeclaredOnly
+                    )
                     |> Array.choose (fun m ->
                         match m with
                         | :? MethodInfo as mi when not mi.IsSpecialName ->
-                            let params' = mi.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
-                            Some (sprintf "  %s(%s): %s" mi.Name params' mi.ReturnType.Name)
-                        | :? PropertyInfo as pi ->
-                            Some (sprintf "  %s: %s" pi.Name pi.PropertyType.Name)
-                        | :? FieldInfo as fi when fi.IsPublic ->
-                            Some (sprintf "  %s: %s" fi.Name fi.FieldType.Name)
+                            let params' =
+                                mi.GetParameters()
+                                |> Array.map (fun p -> p.ParameterType.Name)
+                                |> String.concat ", "
+
+                            Some(sprintf "  %s(%s): %s" mi.Name params' mi.ReturnType.Name)
+                        | :? PropertyInfo as pi -> Some(sprintf "  %s: %s" pi.Name pi.PropertyType.Name)
+                        | :? FieldInfo as fi when fi.IsPublic -> Some(sprintf "  %s: %s" fi.Name fi.FieldType.Name)
                         | :? ConstructorInfo as ci ->
-                            let params' = ci.GetParameters() |> Array.map (fun p -> p.ParameterType.Name) |> String.concat ", "
-                            Some (sprintf "  .ctor(%s)" params')
+                            let params' =
+                                ci.GetParameters()
+                                |> Array.map (fun p -> p.ParameterType.Name)
+                                |> String.concat ", "
+
+                            Some(sprintf "  .ctor(%s)" params')
                         | _ -> None)
+
                 Array.append [| typeSig |] memberSigs)
             |> Array.map ApiSignature
             |> Array.toList
             |> List.sort
-        with _ -> []
+        with _ ->
+            []
 
     let extractCurrent () : ApiSignature list =
         Shell.runOrFail "dotnet" "build -c Release --verbosity quiet" |> ignore
@@ -181,6 +228,7 @@ module Api =
 
     let extractFromTag (tag: string) : ApiSignature list =
         let currentCommit = Shell.runOrFail "git" "rev-parse HEAD"
+
         try
             Shell.runSilent "git" "stash" |> ignore
             Shell.runOrFail "git" (sprintf "checkout %s --quiet" tag) |> ignore
@@ -210,48 +258,66 @@ module Api =
 // ============================================================================
 
 module Bump =
-    type BumpResult = {
-        NewVersion: Version
-        Reason: string
-    }
+    type BumpResult = { NewVersion: Version; Reason: string }
 
     let fromApiChange (current: Version) (change: ApiChange) : BumpResult =
         match current.Stage with
         | PreRelease pre ->
             match current.Stage, change with
-            | PreRelease (RC _), (Breaking _ | Addition _) ->
-                { NewVersion = Version.toBeta current; Reason = "back to beta (API changed in RC)" }
+            | PreRelease(RC _), (Breaking _ | Addition _) ->
+                { NewVersion = Version.toBeta current
+                  Reason = "back to beta (API changed in RC)" }
             | PreRelease pre, _ ->
-                { NewVersion = { current with Stage = PreRelease (Version.bumpPreRelease pre) }
-                  Reason = match pre with Alpha _ -> "alpha" | Beta _ -> "beta" | RC _ -> "rc" }
+                { NewVersion =
+                    { current with
+                        Stage = PreRelease(Version.bumpPreRelease pre) }
+                  Reason =
+                    match pre with
+                    | Alpha _ -> "alpha"
+                    | Beta _ -> "beta"
+                    | RC _ -> "rc" }
         | Stable ->
             match change with
-            | Breaking _ -> { NewVersion = Version.bumpMajor current; Reason = "MAJOR (breaking change)" }
-            | Addition _ -> { NewVersion = Version.bumpMinor current; Reason = "MINOR (new API)" }
-            | NoChange -> { NewVersion = Version.bumpPatch current; Reason = "PATCH (no API changes)" }
+            | Breaking _ ->
+                { NewVersion = Version.bumpMajor current
+                  Reason = "MAJOR (breaking change)" }
+            | Addition _ ->
+                { NewVersion = Version.bumpMinor current
+                  Reason = "MINOR (new API)" }
+            | NoChange ->
+                { NewVersion = Version.bumpPatch current
+                  Reason = "PATCH (no API changes)" }
 
     let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : BumpResult option =
         match cmd, state with
         | ShowHelp, _ -> None
         | StartAlpha, FirstRelease ->
-            Some { NewVersion = Version.firstAlpha; Reason = "first alpha release" }
-        | StartAlpha, HasPreviousRelease (_, v) ->
-            Some { NewVersion = Version.nextAlphaCycle v; Reason = "starting new alpha cycle" }
-        | PromoteToBeta, HasPreviousRelease (_, v) ->
-            Some { NewVersion = Version.toBeta v; Reason = "promoting to beta" }
-        | PromoteToRC, HasPreviousRelease (_, v) ->
-            Some { NewVersion = Version.toRC v; Reason = "promoting to release candidate" }
-        | PromoteToStable, HasPreviousRelease (_, v) ->
-            Some { NewVersion = Version.toStable v; Reason = "promoting to stable" }
-        | Auto, FirstRelease ->
-            None  // Need explicit alpha command for first release
-        | Auto, HasPreviousRelease (tag, v) ->
+            Some
+                { NewVersion = Version.firstAlpha
+                  Reason = "first alpha release" }
+        | StartAlpha, HasPreviousRelease(_, v) ->
+            Some
+                { NewVersion = Version.nextAlphaCycle v
+                  Reason = "starting new alpha cycle" }
+        | PromoteToBeta, HasPreviousRelease(_, v) ->
+            Some
+                { NewVersion = Version.toBeta v
+                  Reason = "promoting to beta" }
+        | PromoteToRC, HasPreviousRelease(_, v) ->
+            Some
+                { NewVersion = Version.toRC v
+                  Reason = "promoting to release candidate" }
+        | PromoteToStable, HasPreviousRelease(_, v) ->
+            Some
+                { NewVersion = Version.toStable v
+                  Reason = "promoting to stable" }
+        | Auto, FirstRelease -> None // Need explicit alpha command for first release
+        | Auto, HasPreviousRelease(tag, v) ->
             let baseline = Api.extractFromTag tag
             let current = Api.extractCurrent ()
             let change = Api.compare baseline current
-            Some (fromApiChange v change)
-        | _, FirstRelease ->
-            None  // Can't promote if no previous release
+            Some(fromApiChange v change)
+        | _, FirstRelease -> None // Can't promote if no previous release
 
 // ============================================================================
 // Git Operations
@@ -259,8 +325,8 @@ module Bump =
 
 module Git =
     let hasUncommittedChanges () =
-        Shell.runSilent "git" "diff --quiet" |> Option.isNone ||
-        Shell.runSilent "git" "diff --cached --quiet" |> Option.isNone
+        Shell.runSilent "git" "diff --quiet" |> Option.isNone
+        || Shell.runSilent "git" "diff --cached --quiet" |> Option.isNone
 
     let tagExists tag =
         match Shell.run "git" "tag -l" with
@@ -269,12 +335,12 @@ module Git =
 
     let getLatestTag () =
         match Shell.run "git" "tag -l v* --sort=-v:refname" with
-        | Success output when output <> "" -> Some (output.Split('\n').[0])
+        | Success output when output <> "" -> Some(output.Split('\n').[0])
         | _ -> None
 
     let getReleaseState () : ReleaseState =
         match getLatestTag () with
-        | Some tag -> HasPreviousRelease (tag, Version.parse tag)
+        | Some tag -> HasPreviousRelease(tag, Version.parse tag)
         | None -> FirstRelease
 
     let commitAndTag (version: Version) =
@@ -282,7 +348,10 @@ module Git =
         let tag = Version.toTag version
         Shell.runOrFail "git" (sprintf "add %s" fsproj) |> ignore
         Shell.runOrFail "git" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
-        Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr) |> ignore
+
+        Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr)
+        |> ignore
+
         tag
 
     let push tag =
@@ -296,8 +365,10 @@ module Git =
 module Project =
     let updateVersion (version: Version) =
         let content = File.ReadAllText(fsproj)
-        let newContent = Regex.Replace(content, @"<Version>.*</Version>",
-                                        sprintf "<Version>%s</Version>" (Version.format version))
+
+        let newContent =
+            Regex.Replace(content, @"<Version>.*</Version>", sprintf "<Version>%s</Version>" (Version.format version))
+
         File.WriteAllText(fsproj, newContent)
 
 // ============================================================================
@@ -309,17 +380,27 @@ module UI =
         printf "%s [y/N] " message
         Console.ReadLine().ToLower() = "y"
 
-    let printApiChanges = function
+    let printApiChanges =
+        function
         | Breaking removed ->
             printfn "\nBREAKING API changes:"
-            removed |> List.truncate 10 |> List.iter (fun (ApiSignature s) -> printfn "  - %s" s)
-            if removed.Length > 10 then printfn "  ... and %d more" (removed.Length - 10)
+
+            removed
+            |> List.truncate 10
+            |> List.iter (fun (ApiSignature s) -> printfn "  - %s" s)
+
+            if removed.Length > 10 then
+                printfn "  ... and %d more" (removed.Length - 10)
         | Addition added ->
             printfn "\nNew APIs:"
-            added |> List.truncate 10 |> List.iter (fun (ApiSignature s) -> printfn "  + %s" s)
-            if added.Length > 10 then printfn "  ... and %d more" (added.Length - 10)
-        | NoChange ->
-            printfn "\nNo API changes detected."
+
+            added
+            |> List.truncate 10
+            |> List.iter (fun (ApiSignature s) -> printfn "  + %s" s)
+
+            if added.Length > 10 then
+                printfn "  ... and %d more" (added.Length - 10)
+        | NoChange -> printfn "\nNo API changes detected."
 
     let showHelp () =
         printfn "Usage: mise run release [command]"
@@ -340,8 +421,10 @@ module UI =
 // Command Parsing
 // ============================================================================
 
-let parseCommand = function
-    | "--help" | "-h" -> ShowHelp
+let parseCommand =
+    function
+    | "--help"
+    | "-h" -> ShowHelp
     | "alpha" -> StartAlpha
     | "beta" -> PromoteToBeta
     | "rc" -> PromoteToRC
@@ -370,29 +453,28 @@ let release (cmd: ReleaseCommand) : ReleaseOutcome =
 
         let state = Git.getReleaseState ()
 
-        printfn "Current version: %s"
+        printfn
+            "Current version: %s"
             (match state with
              | FirstRelease -> "(none)"
-             | HasPreviousRelease (_, v) -> Version.format v)
+             | HasPreviousRelease(_, v) -> Version.format v)
 
         // For Auto command, show what we're comparing
         match cmd, state with
-        | Auto, HasPreviousRelease (tag, _) ->
+        | Auto, HasPreviousRelease(tag, _) ->
             printfn "\nComparing API against %s..." tag
             let baseline = Api.extractFromTag tag
             printfn "Building current version..."
             let current = Api.extractCurrent ()
             let change = Api.compare baseline current
             UI.printApiChanges change
-        | Auto, FirstRelease ->
-            ()
+        | Auto, FirstRelease -> ()
         | _ ->
             printfn "Building current version..."
             Api.extractCurrent () |> ignore
 
         match Bump.forCommand state cmd with
-        | None ->
-            NeedsExplicitCommand "No previous releases. Use 'mise run release alpha' for first release."
+        | None -> NeedsExplicitCommand "No previous releases. Use 'mise run release alpha' for first release."
         | Some bump ->
             let newTag = Version.toTag bump.NewVersion
 
@@ -421,10 +503,15 @@ let release (cmd: ReleaseCommand) : ReleaseOutcome =
 let main argv =
     try
         let cmd = parseCommand (if argv.Length > 0 then argv.[0] else "")
+
         match release cmd with
         | Released _ -> 0
-        | Aborted -> printfn "Aborted."; 0
-        | NeedsExplicitCommand msg -> printfn "%s" msg; 0
+        | Aborted ->
+            printfn "Aborted."
+            0
+        | NeedsExplicitCommand msg ->
+            printfn "%s" msg
+            0
         | HelpShown -> 0
     with ex ->
         eprintfn "Error: %s" ex.Message

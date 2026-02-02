@@ -21,11 +21,10 @@ let excludedPatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
 // Types
 // ============================================================================
 
-type FileCoverage = {
-    FileName: string
-    LineRate: float
-    Percentage: float
-}
+type FileCoverage =
+    { FileName: string
+      LineRate: float
+      Percentage: float }
 
 type CoverageResult =
     | AllPassed of files: FileCoverage list
@@ -52,14 +51,15 @@ let parseFileCoverage (packageElement: XElement) : FileCoverage list =
         let lineRate = classEl.Attribute(XName.Get("line-rate"))
 
         match fileName, lineRate with
-        | null, _ | _, null -> None
+        | null, _
+        | _, null -> None
         | fn, lr ->
             let rate = Double.Parse(lr.Value)
-            Some {
-                FileName = fn.Value
-                LineRate = rate
-                Percentage = rate * 100.0
-            })
+
+            Some
+                { FileName = fn.Value
+                  LineRate = rate
+                  Percentage = rate * 100.0 })
     |> Seq.toList
 
 let parseCoverageReport (xmlPath: string) : FileCoverage list =
@@ -82,13 +82,12 @@ let parseCoverageReport (xmlPath: string) : FileCoverage list =
 // ============================================================================
 
 let checkCoverage (files: FileCoverage list) : CoverageResult =
-    let passed, failed =
-        files |> List.partition (fun f -> f.Percentage >= minCoverage)
+    let passed, failed = files |> List.partition (fun f -> f.Percentage >= minCoverage)
 
     if List.isEmpty failed then
         AllPassed passed
     else
-        SomeFailed (passed, failed)
+        SomeFailed(passed, failed)
 
 // ============================================================================
 // Output
@@ -104,19 +103,15 @@ let printResults (result: CoverageResult) =
         printfn "✓ All %d files meet minimum coverage of %.0f%%\n" files.Length minCoverage
         files |> List.sortBy (fun f -> f.FileName) |> List.iter (printFile "  ✓")
 
-    | SomeFailed (passed, failed) ->
+    | SomeFailed(passed, failed) ->
         printfn "✗ %d file(s) below minimum coverage of %.0f%%\n" failed.Length minCoverage
 
         printfn "Failed:"
-        failed
-        |> List.sortBy (fun f -> f.Percentage)
-        |> List.iter (printFile "  ✗")
+        failed |> List.sortBy (fun f -> f.Percentage) |> List.iter (printFile "  ✗")
 
         if not (List.isEmpty passed) then
             printfn "\nPassed:"
-            passed
-            |> List.sortBy (fun f -> f.FileName)
-            |> List.iter (printFile "  ✓")
+            passed |> List.sortBy (fun f -> f.FileName) |> List.iter (printFile "  ✓")
 
 // ============================================================================
 // Main
