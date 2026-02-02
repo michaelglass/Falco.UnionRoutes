@@ -324,15 +324,18 @@ module Bump =
         | _, FirstRelease -> None // Can't promote if no previous release
 
 // ============================================================================
-// Git Operations
+// Version Control Operations (jj with git fallback for tags)
 // ============================================================================
 
-module Git =
+module VCS =
     let hasUncommittedChanges () =
-        Shell.runSilent "git" "diff --quiet" |> Option.isNone
-        || Shell.runSilent "git" "diff --cached --quiet" |> Option.isNone
+        // jj status shows "The working copy has no changes." when clean
+        match Shell.run "jj" "status" with
+        | Success output -> not (output.Contains("The working copy has no changes"))
+        | Failure _ -> true // Assume changes if jj fails
 
     let tagExists tag =
+        // Tags are still git concepts, use git directly
         match Shell.run "git" "tag -l" with
         | Success output -> output.Split('\n') |> Array.contains tag
         | Failure _ -> false
@@ -350,16 +353,19 @@ module Git =
     let commitAndTag (version: Version) =
         let versionStr = Version.format version
         let tag = Version.toTag version
-        Shell.runOrFail "git" (sprintf "add %s" fsproj) |> ignore
-        Shell.runOrFail "git" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
 
+        // Use jj to commit the version file change
+        Shell.runOrFail "jj" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
+
+        // Create git tag (jj doesn't have tags, uses bookmarks, but git tags work in colocated repos)
         Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr)
         |> ignore
 
         tag
 
     let push tag =
-        Shell.runOrFail "git" "push origin HEAD" |> ignore
+        // Push using jj, then push the tag via git
+        Shell.runOrFail "jj" "git push" |> ignore
         Shell.runOrFail "git" (sprintf "push origin %s" tag) |> ignore
 
 // ============================================================================
@@ -514,10 +520,10 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
         UI.showHelp ()
         HelpShown
     | _ ->
-        if Git.hasUncommittedChanges () then
+        if VCS.hasUncommittedChanges () then
             failwith "You have uncommitted changes. Please commit or stash them first."
 
-        let state = Git.getReleaseState ()
+        let state = VCS.getReleaseState ()
 
         printfn
             "Current version: %s"
@@ -544,7 +550,7 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
         | Some bump ->
             let newTag = Version.toTag bump.NewVersion
 
-            if Git.tagExists newTag then
+            if VCS.tagExists newTag then
                 failwithf "Tag %s already exists" newTag
 
             printfn "\nVersion bump: %s" bump.Reason
@@ -558,7 +564,7 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
                 Aborted
             else
                 Project.updateVersion bump.NewVersion
-                let tag = Git.commitAndTag bump.NewVersion
+                let tag = VCS.commitAndTag bump.NewVersion
                 printfn "Created tag %s" tag
 
                 match mode with
@@ -573,14 +579,14 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
                         printfn "\nPublished to NuGet.org!"
 
                         if UI.promptYesNo "Also push tag to GitHub?" then
-                            Git.push tag
+                            VCS.push tag
                             printfn "Pushed tag %s" tag
                     else
                         printfn "\nTo publish later: dotnet nuget push %s --source https://api.nuget.org/v3/index.json" nupkgPath
 
                 | GitHubActions ->
                     if UI.promptYesNo "\nPush to trigger release?" then
-                        Git.push tag
+                        VCS.push tag
                         printfn "\nPushed! %s/actions" repoUrl
                     else
                         printfn "\nTo push: git push origin HEAD && git push origin %s" tag
