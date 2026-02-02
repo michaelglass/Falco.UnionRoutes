@@ -67,7 +67,10 @@ type AdminRoute =
     | Dashboard of PreCondition<AdminId> // GET /admin/dashboard - admin auth only
     | Users of PreCondition<AdminId> // GET /admin/users - admin auth only
     | [<Route(Path = "users/{id}")>] UserDetail of PreCondition<AdminId> * id: UserId // Custom path for nested resource
-    | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of PreCondition<AdminId> * PreCondition<UserId> * id: Guid // DELETE method + custom path
+    | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of
+        PreCondition<AdminId> *
+        PreCondition<UserId> *
+        id: Guid // DELETE method + custom path
 
 // =============================================================================
 // Nested routes with params example - /users/{userId}/items/{itemId}
@@ -838,13 +841,32 @@ let routeHandler (route: Route) : HttpHandler =
     | Route.UserWithParams userWithParamsRoute -> userWithParamsHandler userWithParamsRoute
 
 // =============================================================================
-// 10. Convert to Falco Endpoints
+// 10. Validate Routes at Startup
 // =============================================================================
+// Validate that all preconditions are registered before starting the app.
+// This catches configuration errors early (at startup, not at request time).
+// RouteReflection.endpoints also validates route structure automatically.
+
+let allPreconditions =
+    [ authPrecondition (); adminPrecondition (); optAdminPrecondition () ]
+
+// Validate precondition coverage - fails fast if any Pre<T>/OptPre<T> is missing
+do
+    match RouteHydration.validatePreconditions<Route, AppError> allPreconditions with
+    | Ok() -> ()
+    | Error errors ->
+        let errorMsg = errors |> String.concat "\n  - "
+        failwith $"Route precondition validation failed:\n  - {errorMsg}"
+
+// =============================================================================
+// 11. Convert to Falco Endpoints
+// =============================================================================
+// Note: endpoints automatically validates route structure (paths, field names, etc.)
 
 let endpoints = RouteReflection.endpoints routeHandler
 
 // =============================================================================
-// 11. Application Entry Point
+// 12. Application Entry Point
 // =============================================================================
 
 [<EntryPoint>]
