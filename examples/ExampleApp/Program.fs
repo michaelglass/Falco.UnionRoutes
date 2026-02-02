@@ -23,6 +23,7 @@ open Microsoft.AspNetCore.Http
 
 type UserId = UserId of Guid
 type PostId = PostId of Guid
+type Slug = Slug of string
 
 // =============================================================================
 // 2. Route Definitions
@@ -34,24 +35,30 @@ type PostId = PostId of Guid
 // Convention-based routes (no attributes needed for common patterns)
 // Fields define what each route needs:
 // - UserId fields are populated via auth pipeline
-// - Guid fields are extracted from route parameters
+// - Wrapper types like PostId (single-case DU of Guid) are auto-detected
+// - Query<'T> fields extract from query string
+// - Query<'T> option returns None when query param is missing
 type PostRoute =
-    | List // GET /posts - no params
-    | Detail of id: Guid // GET /posts/{id} - just the id
+    | List of page: Query<int> option // GET /posts?page=2 - optional query param
+    | Detail of id: PostId // GET /posts/{id} - extracts Guid, wraps as PostId
     | Create of UserId // POST /posts - requires auth
-    | Delete of UserId * id: Guid // DELETE /posts/{id} - auth + id
-    | Patch of UserId * id: Guid // PATCH /posts/{id} - auth + id
+    | Delete of UserId * id: PostId // DELETE /posts/{id} - auth + PostId
+    | Patch of UserId * id: PostId // PATCH /posts/{id} - auth + PostId
+    | [<Route(Path = "search")>] Search of query: Query<string> // GET /posts/search?query=... - required query param
 
 // Explicit attributes for custom paths or overriding conventions
+// Also uses wrapper types (UserId wraps Guid)
 type UserRoute =
-    | [<Route(Path = "{userId}")>] Profile of userId: Guid // Custom param name
-    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: Guid // PUT instead of convention
+    | [<Route(Path = "{userId}")>] Profile of userId: UserId // Custom param name, wrapper type
+    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: UserId // PUT instead of convention
     | [<Route(Path = "me")>] Me // Custom static path
 
 // Mix of conventions and explicit attributes
+// Also demonstrates custom type extraction with Slug
 type ApiRoute =
     | [<Route(RouteMethod.Any, Path = "webhook")>] Webhook // Any HTTP method
     | [<Route(Path = "v2/status")>] Status // Custom nested path
+    | [<Route(Path = "articles/{slug}")>] Article of slug: Slug // Custom type with custom extractor
 
 type Route =
     | Root
@@ -134,20 +141,43 @@ let requireAuth: Pipeline<UserId, AppError> =
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
 
-/// Require a user ID from route parameter (for UserRoute)
-let requireUserIdFromRoute: Pipeline<UserId, AppError> =
-    requireRouteId "userId" UserId (BadRequest "Invalid user ID")
-
 // =============================================================================
 // 6b. Route Hydration
 // =============================================================================
 // RouteHydration.create automatically extracts fields based on their types:
 // - UserId fields use the auth pipeline
 // - Guid fields are extracted from route params by field name
+// - Custom extractors can handle domain-specific types like Slug
+// - Errors are accumulated and combined via makeErrors function
+
+/// Combine validation errors into a single BadRequest
+let combineErrors (msgs: string list) = BadRequest(String.concat "; " msgs)
 
 /// Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
-    RouteHydration.create<PostRoute, UserId, AppError> requireAuth BadRequest
+    RouteHydration.create<PostRoute, UserId, AppError> requireAuth combineErrors
+
+/// Hydrate UserRoute - no auth needed, just extracts route params
+let hydrateUser: UserRoute -> Pipeline<UserRoute, AppError> =
+    RouteHydration.createNoAuth<UserRoute, AppError> combineErrors
+
+/// Custom extractor for Slug type - demonstrates extensibility
+let slugExtractor: TypeExtractor =
+    fun fieldName fieldType ctx ->
+        if fieldType = typeof<Slug> then
+            let route = Request.getRoute ctx
+            let value = route.GetString fieldName
+
+            if String.IsNullOrEmpty(value) then
+                Some(Error $"Missing slug: {fieldName}")
+            else
+                Some(Ok(box (Slug value)))
+        else
+            None // Can't handle this type, defer to built-in extractors
+
+/// Hydrate ApiRoute - uses custom extractor for Slug type
+let hydrateApi: ApiRoute -> Pipeline<ApiRoute, AppError> =
+    RouteHydration.createNoAuthWith<ApiRoute, AppError> [ slugExtractor ] combineErrors
 
 // =============================================================================
 // 7. Handlers
@@ -207,10 +237,17 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
 
     let health: HttpHandler = Response.ofJson {| status = "ok" |}
 
-    let listPosts: HttpHandler =
+    let listPosts (page: Query<int> option) : HttpHandler =
+        let pageNum = page |> Option.map (fun (Query p) -> p) |> Option.defaultValue 1
+
         htmlResponse
             "Posts"
             [ Elem.h1 [] [ Text.raw "Posts" ]
+              Elem.p [] [ Text.raw $"Page {pageNum}" ]
+              Elem.p
+                  []
+                  [ Text.raw "Try: "
+                    Elem.a [ Attr.href "/posts?page=2" ] [ Text.raw "/posts?page=2" ] ]
               Elem.ul
                   []
                   [ Elem.li [] [ Elem.a [ Attr.href $"/posts/{sampleId}" ] [ Text.raw "Post 1: Introduction to F#" ] ]
@@ -218,6 +255,16 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
                         []
                         [ Elem.a [ Attr.href $"/posts/{Guid.NewGuid()}" ] [ Text.raw "Post 2: Falco Web Framework" ] ] ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let searchPosts (query: Query<string>) : HttpHandler =
+        let (Query q) = query
+
+        htmlResponse
+            "Search Results"
+            [ Elem.h1 [] [ Text.raw "Search Results" ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Query: " ]; Elem.code [] [ Text.raw q ] ]
+              Elem.p [] [ Text.raw "This demonstrates Query<'T> extraction from query string." ]
+              Elem.a [ Attr.href "/posts" ] [ Text.raw "Back to posts" ] ]
 
     let getPost (postId: PostId) : HttpHandler =
         let (PostId id) = postId
@@ -314,6 +361,16 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
 
     let apiStatus: HttpHandler = Response.ofJson {| version = "2.0"; status = "ok" |}
 
+    let article (slug: Slug) : HttpHandler =
+        let (Slug s) = slug
+
+        htmlResponse
+            "Article"
+            [ Elem.h1 [] [ Text.raw "Article" ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Slug: " ]; Elem.code [] [ Text.raw s ] ]
+              Elem.p [] [ Text.raw "This demonstrates custom type extraction with a Slug type." ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
 // =============================================================================
 // 8. Post Handler (using hydration)
 // =============================================================================
@@ -322,15 +379,44 @@ curl -X DELETE http://localhost:5000/posts/{sampleId} -H "X-User-Id: {sampleId}"
 
 let handlePost (route: PostRoute) : HttpHandler =
     match route with
-    | PostRoute.List -> Handlers.listPosts
-    | PostRoute.Detail id -> Handlers.getPost (PostId id)
+    | PostRoute.List page -> Handlers.listPosts page
+    | PostRoute.Detail postId -> Handlers.getPost postId
     | PostRoute.Create userId -> Handlers.createPost userId
-    | PostRoute.Delete(userId, id) -> Handlers.deletePost (userId, PostId id)
-    | PostRoute.Patch(userId, id) -> Handlers.patchPost (userId, PostId id)
+    | PostRoute.Delete(userId, postId) -> Handlers.deletePost (userId, postId)
+    | PostRoute.Patch(userId, postId) -> Handlers.patchPost (userId, postId)
+    | PostRoute.Search query -> Handlers.searchPosts query
 
 /// Combined: hydrate then handle
 let postHandler (route: PostRoute) : HttpHandler =
     Pipeline.run toErrorResponse (hydratePost route) handlePost
+
+// =============================================================================
+// 8b. User Handler (using hydration)
+// =============================================================================
+
+let handleUser (route: UserRoute) : HttpHandler =
+    match route with
+    | UserRoute.Profile userId -> Handlers.getProfile userId
+    | UserRoute.Update userId -> Handlers.updateUser userId
+    | UserRoute.Me -> Handlers.currentUser
+
+/// Combined: hydrate then handle
+let userHandler (route: UserRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydrateUser route) handleUser
+
+// =============================================================================
+// 8c. Api Handler (using hydration with custom extractor)
+// =============================================================================
+
+let handleApi (route: ApiRoute) : HttpHandler =
+    match route with
+    | ApiRoute.Webhook -> Handlers.webhook
+    | ApiRoute.Status -> Handlers.apiStatus
+    | ApiRoute.Article slug -> Handlers.article slug
+
+/// Combined: hydrate then handle (uses custom Slug extractor)
+let apiHandler (route: ApiRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydrateApi route) handleApi
 
 // =============================================================================
 // 9. Top-level Route Handler
@@ -341,18 +427,14 @@ let routeHandler (route: Route) : HttpHandler =
     | Route.Root -> Handlers.home
     | Route.Health -> Handlers.health
 
-    // PostRoute uses hydration
+    // PostRoute uses hydration (with auth)
     | Route.Posts postRoute -> postHandler postRoute
 
-    // User routes (still using manual pipelines for comparison)
-    | Route.Users(UserRoute.Profile _) -> Pipeline.run toErrorResponse requireUserIdFromRoute Handlers.getProfile
-    | Route.Users(UserRoute.Update _) ->
-        Pipeline.run toErrorResponse (requireRouteId "id" UserId (BadRequest "Invalid user ID")) Handlers.updateUser
-    | Route.Users UserRoute.Me -> Handlers.currentUser
+    // UserRoute uses hydration (no auth, just route params)
+    | Route.Users userRoute -> userHandler userRoute
 
-    // API routes
-    | Route.Api ApiRoute.Webhook -> Handlers.webhook
-    | Route.Api ApiRoute.Status -> Handlers.apiStatus
+    // ApiRoute uses hydration with custom Slug extractor
+    | Route.Api apiRoute -> apiHandler apiRoute
 
 // =============================================================================
 // 10. Convert to Falco Endpoints
