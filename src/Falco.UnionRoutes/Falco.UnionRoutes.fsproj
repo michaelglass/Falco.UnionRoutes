@@ -8,7 +8,7 @@
 
     <!-- Package metadata -->
     <PackageId>Falco.UnionRoutes</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.0-alpha.2</Version>
     <Authors>Michael Glass</Authors>
     <Description>Type-safe routing with discriminated unions and railway-oriented handler composition for Falco</Description>
     <PackageTags>fsharp;falco;routing;union;discriminated-union;railway;web</PackageTags>
