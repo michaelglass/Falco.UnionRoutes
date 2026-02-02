@@ -81,7 +81,7 @@ type ItemId = ItemId of Guid
 
 type UserItemRoute =
     | List // GET /nested-user/{userId}/items - inherits OptionalPreCondition<AdminId>
-    | Detail of itemId: ItemId // GET /nested-user/{userId}/items/{itemId}
+    | Show of itemId: ItemId // GET /nested-user/{userId}/items/{itemId} - "Show" convention (no /show prefix)
     | [<SkipAllPreconditions>] Public // skips ALL optional preconditions
     | [<SkipPrecondition(typeof<AdminId>)>] Limited // skips only OptionalPreCondition<AdminId>
 
@@ -783,7 +783,7 @@ let internalHandler (route: InternalApiRoute) : HttpHandler =
 let handleUserItem (userId: UserId) (adminIdOpt: AdminId option) (route: UserItemRoute) : HttpHandler =
     match route with
     | UserItemRoute.List -> Handlers.userItemList userId adminIdOpt
-    | UserItemRoute.Detail itemId -> Handlers.userItemDetail userId itemId adminIdOpt
+    | UserItemRoute.Show itemId -> Handlers.userItemDetail userId itemId adminIdOpt
     | UserItemRoute.Public -> Handlers.userItemPublic userId
     | UserItemRoute.Limited -> Handlers.userItemLimited userId
 

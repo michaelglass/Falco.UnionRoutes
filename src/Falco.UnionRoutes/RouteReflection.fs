@@ -112,6 +112,7 @@ module RouteReflection =
     /// Infer path segment from case fields (e.g., "of id: Guid" -> "{id}")
     /// Excludes: nested route unions, Pre<'T> (preconditions), OptPre<'T> (skippable preconditions), Query<'T> (query params)
     /// When there are BOTH params AND nested union, includes case name as prefix: "users/{userId}"
+    /// Exception: "Show" convention uses just the param path: "{id}"
     let private inferPathFromFields (case: UnionCaseInfo) : string option =
         let fields = case.GetFields()
 
@@ -132,12 +133,13 @@ module RouteReflection =
                 let paramPath =
                     pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
 
-                // Include case name when there's both params AND nested union
+                // "Show" convention: just the param path (e.g., "{id}" for /users/{id})
+                // Other cases with nested union: include case name prefix
                 // e.g., Users of userId: UserId * UserRoute -> "users/{userId}"
-                if hasNestedUnion then
-                    Some(toKebabCase case.Name + "/" + paramPath)
-                else
-                    Some paramPath
+                match case.Name with
+                | "Show" -> Some paramPath
+                | _ when hasNestedUnion -> Some(toKebabCase case.Name + "/" + paramPath)
+                | _ -> Some paramPath
 
     /// Check if a case has any route path fields (i.e., typed arguments like "of id: Guid")
     /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
