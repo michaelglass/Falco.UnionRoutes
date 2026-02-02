@@ -113,7 +113,7 @@ module RouteReflection =
         |> Array.exists (fun f -> not (isNonRouteField f))
 
     /// Get path segment from a case (uses attribute Path if set, otherwise infers from fields or case name)
-    /// Special cases for empty path: "Root", "List", "Create", "Show"
+    /// Special cases for empty path: "Root", "List", "Create"
     let private getPathSegment (case: UnionCaseInfo) : string =
         match getRouteAttr case |> Option.bind getAttrPath with
         | Some path -> path
@@ -126,8 +126,7 @@ module RouteReflection =
                 match case.Name with
                 | "Root"
                 | "List"
-                | "Create"
-                | "Show" -> ""
+                | "Create" -> ""
                 | caseName -> toKebabCase caseName
 
     /// Get HTTP method from a case's RouteAttribute (defaults based on case name)
