@@ -35,7 +35,7 @@ module RouteReflection =
         | RouteMethod.Delete -> HttpMethod.Delete
         | RouteMethod.Patch -> HttpMethod.Patch
         | RouteMethod.Any -> HttpMethod.Any
-        | _ -> HttpMethod.Get
+        | unknown -> failwith $"Unknown RouteMethod: {int unknown}"
 
     /// Get RouteAttribute from a union case, if present
     let getRouteAttr (case: UnionCaseInfo) : RouteAttribute option =
@@ -49,13 +49,43 @@ module RouteReflection =
         | null -> None
         | path -> Some path
 
+    /// Check if a type is Pre<'T> (precondition marker - should not be in route path)
+    /// Detected by name since Pre<'T> is defined in RouteHydration.fs (compiled later)
+    let private isPreconditionType (t: Type) =
+        t.IsGenericType
+        && t.GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Pre`1"
+
+    /// Check if a type is Query<'T> (query parameter - should not be in route path)
+    /// Detected by name since Query<'T> is defined in RouteHydration.fs (compiled later)
+    let private isQueryType (t: Type) =
+        t.IsGenericType
+        && t.GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Query`1"
+
+    /// Check if a type is Query<'T> option (optional query parameter - should not be in route path)
+    let private isOptionalQueryType (t: Type) =
+        t.IsGenericType
+        && t.GetGenericTypeDefinition() = typedefof<option<_>>
+        && t.GetGenericArguments().[0].IsGenericType
+        && t.GetGenericArguments().[0].GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Query`1"
+
     /// Check if a type is a nested route union (for hierarchy traversal)
+    /// Excludes: strings, options, Pre<'T>, Query<'T>
     let private isNestedRouteUnion (t: Type) =
         FSharpType.IsUnion(t)
         && t <> typeof<string>
         && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
+        && not (isPreconditionType t)
+        && not (isQueryType t)
+
+    /// Check if a field should be excluded from route path (nested route unions, preconditions, query params)
+    let private isNonRouteField (f: Reflection.PropertyInfo) =
+        isNestedRouteUnion f.PropertyType
+        || isPreconditionType f.PropertyType
+        || isQueryType f.PropertyType
+        || isOptionalQueryType f.PropertyType
 
     /// Infer path segment from case fields (e.g., "of id: Guid" -> "{id}")
+    /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
     let private inferPathFromFields (case: UnionCaseInfo) : string option =
         let fields = case.GetFields()
 
@@ -64,9 +94,9 @@ module RouteReflection =
         elif fields.Length = 1 && isNestedRouteUnion fields.[0].PropertyType then
             None // Nested route union, not a path parameter
         else
-            // Filter out nested route union fields
+            // Filter out non-route fields (nested unions, preconditions, query params)
             let pathFields =
-                fields |> Array.filter (fun f -> not (isNestedRouteUnion f.PropertyType))
+                fields |> Array.filter (fun f -> not (isNonRouteField f))
 
             if pathFields.Length = 0 then
                 None
@@ -76,10 +106,11 @@ module RouteReflection =
                 |> String.concat "/"
                 |> Some
 
-    /// Check if a case has any non-nested-union fields (i.e., typed arguments like "of id: Guid")
-    let private hasTypedArgs (case: UnionCaseInfo) : bool =
+    /// Check if a case has any route path fields (i.e., typed arguments like "of id: Guid")
+    /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
+    let private hasRoutePathFields (case: UnionCaseInfo) : bool =
         case.GetFields()
-        |> Array.exists (fun f -> not (isNestedRouteUnion f.PropertyType))
+        |> Array.exists (fun f -> not (isNonRouteField f))
 
     /// Get path segment from a case (uses attribute Path if set, otherwise infers from fields or case name)
     /// Special cases for empty path: "Root", "List", "Create", "Show"
@@ -97,7 +128,7 @@ module RouteReflection =
                 | "List"
                 | "Create"
                 | "Show" -> ""
-                | _ -> toKebabCase case.Name
+                | caseName -> toKebabCase caseName
 
     /// Get HTTP method from a case's RouteAttribute (defaults based on case name)
     /// Convention: Create -> POST, Delete -> DELETE, Patch -> PATCH, else GET
@@ -109,7 +140,7 @@ module RouteReflection =
             | "Create" -> Some HttpMethod.Post
             | "Delete" -> Some HttpMethod.Delete
             | "Patch" -> Some HttpMethod.Patch
-            | _ -> Some HttpMethod.Get
+            | _otherCaseName -> Some HttpMethod.Get
 
     /// Recursively extract route info by walking the union value hierarchy
     /// Returns (HttpMethod option, path segments list)
@@ -210,13 +241,14 @@ module RouteReflection =
                 fieldInfos |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
 
             // Substitute field values into the segment pattern
+            // Only include route path fields (exclude nested unions, preconditions, query params)
             let segment =
                 if String.IsNullOrEmpty(segmentPattern) then
                     ""
                 else
                     fieldInfos
                     |> Array.indexed
-                    |> Array.filter (fun (i, f) -> not (isNestedRouteUnion f.PropertyType) && i < fieldValues.Length)
+                    |> Array.filter (fun (i, f) -> not (isNonRouteField f) && i < fieldValues.Length)
                     |> Array.fold
                         (fun (seg: string) (i, f) ->
                             let value = fieldValues.[i]
