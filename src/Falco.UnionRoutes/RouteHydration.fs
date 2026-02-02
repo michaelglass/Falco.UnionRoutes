@@ -5,103 +5,167 @@ open Falco
 open Microsoft.AspNetCore.Http
 open Microsoft.FSharp.Reflection
 
-/// A custom type extractor for route hydration.
-/// Takes field name, field type, and HTTP context.
-/// Returns Some (Ok value) if extraction succeeds, Some (Error message) if it fails,
-/// or None to defer to other extractors.
+/// <summary>A custom type extractor for route hydration.</summary>
+/// <remarks>
+/// <para>A function that takes (fieldName: string, fieldType: Type, ctx: HttpContext) and returns:</para>
+/// <list type="bullet">
+///   <item><description><c>Some (Ok value)</c> if extraction succeeds</description></item>
+///   <item><description><c>Some (Error message)</c> if extraction fails</description></item>
+///   <item><description><c>None</c> to defer to other extractors</description></item>
+/// </list>
+/// </remarks>
+/// <example>
+/// <code>
+/// let slugExtractor: TypeExtractor =
+///     fun fieldName fieldType ctx ->
+///         if fieldType = typeof&lt;Slug&gt; then
+///             let value = Request.getRoute(ctx).GetString(fieldName)
+///             if String.IsNullOrEmpty(value) then Some(Error $"Missing slug: {fieldName}")
+///             else Some(Ok(box (Slug value)))
+///         else None
+/// </code>
+/// </example>
 type TypeExtractor = string -> Type -> HttpContext -> Result<obj, string> option
 
-/// Wrapper type to indicate a field should be extracted from query string instead of route params.
-/// Example: `| Search of query: QueryParam<string>` extracts from `?query=...`
+/// <summary>Wrapper type to indicate a field should be extracted from query string instead of route params.</summary>
+/// <typeparam name="T">The type of the query parameter value.</typeparam>
+/// <example>
+/// <code>
+/// type PostRoute =
+///     | Search of query: QueryParam&lt;string&gt;     // extracts from ?query=...
+///     | List of page: QueryParam&lt;int&gt; option    // optional query param
+/// </code>
+/// </example>
 type Query<'T> = Query of 'T
 
-/// Alias for Query<'T> with a more descriptive name.
+/// <summary>Alias for <c>Query&lt;'T&gt;</c> with a more descriptive name.</summary>
+/// <typeparam name="T">The type of the query parameter value.</typeparam>
 type QueryParam<'T> = Query<'T>
 
-/// Marker type to indicate a field comes from a precondition (auth, validation, etc.)
-/// rather than from route/query parameters. Pre<'T> is STRICT - it always runs
-/// and cannot be skipped by child routes.
-///
-/// Example:
-/// ```fsharp
+/// <summary>Marker type to indicate a field comes from a precondition (auth, validation, etc.)
+/// rather than from route/query parameters.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
+/// <remarks>
+/// <para><c>Pre&lt;'T&gt;</c> is STRICT - it always runs and cannot be skipped by child routes.</para>
+/// <para>Use <see cref="OptPre{T}"/> for skippable preconditions.</para>
+/// </remarks>
+/// <example>
+/// <code>
 /// type PostRoute =
 ///     | List                                    // No preconditions
-///     | Create of PreCondition<UserId>          // UserId from auth precondition
-///     | Delete of PreCondition<UserId> * id: Guid  // Auth + route param
-/// ```
+///     | Create of PreCondition&lt;UserId&gt;          // UserId from auth precondition
+///     | Delete of PreCondition&lt;UserId&gt; * id: Guid  // Auth + route param
+/// </code>
+/// </example>
+/// <seealso cref="OptPre{T}"/>
 type Pre<'T> = Pre of 'T
 
-/// Alias for Pre<'T> with a more descriptive name.
+/// <summary>Alias for <c>Pre&lt;'T&gt;</c> with a more descriptive name.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
 type PreCondition<'T> = Pre<'T>
 
-/// Marker type for a SKIPPABLE precondition. Child routes can opt out using
-/// [<SkipAllPreconditions>] or [<SkipPrecondition(typeof<T>)>] attributes.
-/// When skipped, the handler should ignore the value with _ pattern.
-///
-/// Example:
-/// ```fsharp
+/// <summary>Marker type for a SKIPPABLE precondition.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
+/// <remarks>
+/// <para>Child routes can opt out using <see cref="SkipAllPreconditionsAttribute"/> or
+/// <see cref="SkipPreconditionAttribute"/>.</para>
+/// <para>When skipped, the handler should ignore the value with <c>_</c> pattern.</para>
+/// <para>Use <see cref="Pre{T}"/> for strict preconditions that cannot be skipped.</para>
+/// </remarks>
+/// <example>
+/// <code>
 /// type UserItemRoute =
 ///     | List                                    // inherits parent preconditions
-///     | [<SkipAllPreconditions>] Public         // skips OptPre, handler uses _
+///     | [&lt;SkipAllPreconditions&gt;] Public         // skips OptPre, handler uses _
 ///
 /// type Route =
-///     | Users of Pre<AdminId> * OptPre<UserId> * UserRoute
+///     | Users of Pre&lt;AdminId&gt; * OptPre&lt;UserId&gt; * UserRoute
 ///
 /// // Handler:
 /// match route with
 /// | Users (Pre adminId, _, Items Public) ->
-///     // adminId always verified (Pre can't skip)
-///     // userId skipped, use _ pattern
-///     handlePublic adminId
-/// ```
+///     handlePublic adminId  // userId skipped, use _ pattern
+/// </code>
+/// </example>
+/// <seealso cref="Pre{T}"/>
 type OptPre<'T> = OptPre of 'T
 
-/// Alias for OptPre<'T> with a more descriptive name.
+/// <summary>Alias for <c>OptPre&lt;'T&gt;</c> with a more descriptive name.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
 type OptionalPreCondition<'T> = OptPre<'T>
 
-/// A precondition that provides a value of a specific type from the HTTP context.
+/// <summary>A precondition that provides a value of a specific type from the HTTP context.</summary>
+/// <typeparam name="Error">The error type returned when the precondition fails.</typeparam>
+/// <remarks>
 /// Used for auth, validation, or any computation that should run before route handling.
+/// Create instances using <see cref="RouteHydration.forPre"/> or <see cref="RouteHydration.forOptPre"/>.
+/// </remarks>
 type Precondition<'Error> =
-    { MatchType: Type
+    { /// <summary>The type this precondition matches (e.g., <c>typeof&lt;Pre&lt;UserId&gt;&gt;</c>).</summary>
+      MatchType: Type
+      /// <summary>The extraction function that runs the precondition.</summary>
       Extract: HttpContext -> Result<obj, 'Error> }
 
-/// Automatic route hydration based on route type structure.
-///
-/// Examines each field in a route case and:
-/// - If the field is Pre<'T>, looks up a precondition for that type
-/// - Custom extractors are tried next (if provided)
-/// - Primitive types (Guid, string, int, int64, bool) extract from route params
-/// - If the field is Query<'T>, extracts from query string (required)
-/// - If the field is Query<'T> option, extracts from query string (optional)
-///
-/// Wrapper types (single-case DUs like `type PostId = PostId of Guid`) are
-/// automatically detected and unwrapped for extraction, then re-wrapped.
-///
-/// Example:
-/// ```fsharp
+/// <summary>Automatic route hydration based on route type structure.</summary>
+/// <remarks>
+/// <para>Examines each field in a route case and extracts values based on type:</para>
+/// <list type="bullet">
+///   <item><description><c>Pre&lt;'T&gt;</c> - looks up a precondition for that type</description></item>
+///   <item><description><c>OptPre&lt;'T&gt;</c> - skippable precondition</description></item>
+///   <item><description>Custom extractors are tried next (if provided)</description></item>
+///   <item><description>Primitives (Guid, string, int, int64, bool) - extract from route params</description></item>
+///   <item><description><c>Query&lt;'T&gt;</c> - extracts from query string (required)</description></item>
+///   <item><description><c>Query&lt;'T&gt; option</c> - extracts from query string (optional)</description></item>
+/// </list>
+/// <para>Wrapper types (single-case DUs like <c>type PostId = PostId of Guid</c>) are
+/// automatically detected and unwrapped for extraction, then re-wrapped.</para>
+/// </remarks>
+/// <example>
+/// <code>
 /// type PostId = PostId of Guid
 /// type PostRoute =
-///     | List of page: Query<int> option   // optional query param
+///     | List of page: Query&lt;int&gt; option   // optional query param
 ///     | Detail of PostId                  // extracts Guid, wraps in PostId
-///     | Create of Pre<UserId>             // precondition field
-///     | Delete of Pre<UserId> * PostId
-///     | Search of query: Query<string>    // required query param
+///     | Create of Pre&lt;UserId&gt;             // precondition field
+///     | Delete of Pre&lt;UserId&gt; * PostId
+///     | Search of query: Query&lt;string&gt;    // required query param
 ///
-/// let preconditions = [ forPre<UserId, AppError> requireAuth ]
-/// let hydrate = RouteHydration.create<PostRoute, AppError> preconditions [] makeError combineErrors
-/// ```
+/// let preconditions = [ forPre&lt;UserId, AppError&gt; requireAuth ]
+/// let hydrate = RouteHydration.create&lt;PostRoute, AppError&gt; preconditions [] makeError combineErrors
+/// </code>
+/// </example>
 [<RequireQualifiedAccess>]
 module RouteHydration =
 
-    /// Creates a precondition for Pre<'T> that runs the given pipeline.
-    /// The result is automatically wrapped in Pre.
+    /// <summary>Creates a strict precondition for <c>Pre&lt;'T&gt;</c> that runs the given pipeline.</summary>
+    /// <typeparam name="T">The type of value the precondition provides.</typeparam>
+    /// <typeparam name="Error">The error type returned on failure.</typeparam>
+    /// <param name="pipeline">The pipeline that extracts the value from HTTP context.</param>
+    /// <returns>A precondition that can be passed to <see cref="create"/>.</returns>
+    /// <remarks>The result is automatically wrapped in <c>Pre</c>. This precondition cannot be skipped.</remarks>
+    /// <example>
+    /// <code>
+    /// let authPrecondition = RouteHydration.forPre&lt;UserId, AppError&gt; requireAuth
+    /// </code>
+    /// </example>
     let forPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
         { MatchType = typeof<Pre<'T>>
           Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (Pre v)) }
 
-    /// Creates a precondition for OptPre<'T> that runs the given pipeline.
-    /// The result is automatically wrapped in OptPre.
-    /// This precondition can be skipped by child routes using skip attributes.
+    /// <summary>Creates a skippable precondition for <c>OptPre&lt;'T&gt;</c> that runs the given pipeline.</summary>
+    /// <typeparam name="T">The type of value the precondition provides.</typeparam>
+    /// <typeparam name="Error">The error type returned on failure.</typeparam>
+    /// <param name="pipeline">The pipeline that extracts the value from HTTP context.</param>
+    /// <returns>A precondition that can be passed to <see cref="create"/>.</returns>
+    /// <remarks>
+    /// The result is automatically wrapped in <c>OptPre</c>.
+    /// Child routes can skip this using <see cref="SkipAllPreconditionsAttribute"/> or <see cref="SkipPreconditionAttribute"/>.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// let optAdminPrecondition = RouteHydration.forOptPre&lt;AdminId, AppError&gt; requireAdmin
+    /// </code>
+    /// </example>
     let forOptPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
         { MatchType = typeof<OptPre<'T>>
           Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (OptPre v)) }
@@ -505,8 +569,20 @@ module RouteHydration =
         else
             t.Name
 
-    /// Validates that all Pre<T> and OptPre<T> fields have registered preconditions.
-    /// Returns Ok () if valid, Error with list of missing precondition types if invalid.
+    /// <summary>Validates that all <c>Pre&lt;T&gt;</c> and <c>OptPre&lt;T&gt;</c> fields have registered preconditions.</summary>
+    /// <typeparam name="Route">The route union type to validate.</typeparam>
+    /// <typeparam name="Error">The error type used by preconditions.</typeparam>
+    /// <param name="preconditions">The list of registered preconditions.</param>
+    /// <returns><c>Ok ()</c> if all precondition types are covered, <c>Error</c> with list of missing types if invalid.</returns>
+    /// <remarks>Call this at application startup to catch missing precondition registrations early.</remarks>
+    /// <example>
+    /// <code>
+    /// let allPreconditions = [ authPrecondition(); adminPrecondition() ]
+    /// match RouteHydration.validatePreconditions&lt;Route, AppError&gt; allPreconditions with
+    /// | Ok () -> ()
+    /// | Error errors -> failwith (String.concat "\n" errors)
+    /// </code>
+    /// </example>
     let validatePreconditions<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
         let requiredTypes = collectPreconditionTypes typeof<'Route>
         let registeredTypes = preconditions |> List.map (fun p -> p.MatchType)
@@ -522,9 +598,24 @@ module RouteHydration =
             let missingStr = missingTypes |> String.concat ", "
             Error [ $"Missing preconditions for: {missingStr}" ]
 
-    /// Full validation: route structure + precondition coverage.
-    /// Designed for use in tests.
-    /// Returns Ok () if valid, Error with list of all issues if invalid.
+    /// <summary>Full validation: route structure + precondition coverage.</summary>
+    /// <typeparam name="Route">The route union type to validate.</typeparam>
+    /// <typeparam name="Error">The error type used by preconditions.</typeparam>
+    /// <param name="preconditions">The list of registered preconditions.</param>
+    /// <returns><c>Ok ()</c> if valid, <c>Error</c> with list of all issues if invalid.</returns>
+    /// <remarks>
+    /// Designed for use in tests. Combines <see cref="RouteReflection.validateStructure"/>
+    /// and <see cref="validatePreconditions"/> into a single validation call.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// [&lt;Fact&gt;]
+    /// let ``all routes are valid`` () =
+    ///     let preconditions = [ authPrecondition(); adminPrecondition() ]
+    ///     let result = RouteHydration.validate&lt;Route, AppError&gt; preconditions
+    ///     Assert.Equal(Ok (), result)
+    /// </code>
+    /// </example>
     let validate<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
         let structureErrors =
             match RouteReflection.validateStructure<'Route> () with
@@ -544,28 +635,37 @@ module RouteHydration =
     // Hydration
     // =========================================================================
 
-    /// Creates a hydration function for a route type.
-    /// All errors are accumulated and combined using combineErrors.
-    ///
-    /// The hydration function examines the route case and extracts values for each field:
-    /// - Fields of type Pre<'T> use the matching precondition (errors preserve type) - ALWAYS runs
-    /// - Fields of type OptPre<'T> use the matching precondition, but can be skipped by child routes
-    /// - Custom extractors are tried next (in order)
-    /// - Primitive types (Guid, string, int, int64, bool) extract from route params
-    /// - Single-case DU wrappers (like PostId of Guid) are auto-detected
-    /// - Query<'T> extracts from query string
-    /// - Query<'T> option for optional query params
-    ///
-    /// Skip behavior for OptPre<'T>:
-    /// - Child routes can use [<SkipAllPreconditions>] to skip all OptPre preconditions
-    /// - Child routes can use [<SkipPrecondition(typeof<T>)>] to skip specific OptPre<T>
-    /// - Pre<'T> (strict preconditions) are NEVER affected by skip attributes
-    /// - When skipped, OptPre provides a sentinel value (handler should ignore with _ pattern)
-    ///
-    /// Error handling:
-    /// - Precondition errors preserve their original type
-    /// - Extraction errors (strings) are converted to 'Error via makeError
-    /// - All errors are accumulated and combined via combineErrors
+    /// <summary>Creates a hydration function for a route type.</summary>
+    /// <typeparam name="Route">The route union type to hydrate.</typeparam>
+    /// <typeparam name="Error">The error type for the application.</typeparam>
+    /// <param name="preconditions">List of preconditions created with <see cref="forPre"/> or <see cref="forOptPre"/>.</param>
+    /// <param name="extractors">Custom type extractors for domain-specific types.</param>
+    /// <param name="makeError">Function to convert extraction error strings to the error type.</param>
+    /// <param name="combineErrors">Function to combine multiple errors into one.</param>
+    /// <returns>A function that takes a route and returns a pipeline that hydrates it.</returns>
+    /// <remarks>
+    /// <para>The hydration function examines each field and extracts values based on type:</para>
+    /// <list type="bullet">
+    ///   <item><description><c>Pre&lt;'T&gt;</c> - uses matching precondition (ALWAYS runs, errors preserve type)</description></item>
+    ///   <item><description><c>OptPre&lt;'T&gt;</c> - uses matching precondition, can be skipped by child routes</description></item>
+    ///   <item><description>Custom extractors are tried next (in order)</description></item>
+    ///   <item><description>Primitives (Guid, string, int, int64, bool) - extract from route params</description></item>
+    ///   <item><description>Single-case DU wrappers (like <c>PostId of Guid</c>) - auto-detected</description></item>
+    ///   <item><description><c>Query&lt;'T&gt;</c> - extracts from query string (required)</description></item>
+    ///   <item><description><c>Query&lt;'T&gt; option</c> - extracts from query string (optional)</description></item>
+    /// </list>
+    /// <para>All errors are accumulated and combined using <paramref name="combineErrors"/>.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// let hydratePost: PostRoute -> Pipeline&lt;PostRoute, AppError&gt; =
+    ///     RouteHydration.create&lt;PostRoute, AppError&gt;
+    ///         [ authPrecondition() ]
+    ///         [ slugExtractor ]
+    ///         makeError
+    ///         combineErrors
+    /// </code>
+    /// </example>
     let create<'Route, 'Error>
         (preconditions: Precondition<'Error> list)
         (extractors: TypeExtractor list)
