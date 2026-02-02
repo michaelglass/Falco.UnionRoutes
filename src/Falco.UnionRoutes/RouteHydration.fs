@@ -105,6 +105,20 @@ module RouteHydration =
         else
             None
 
+    /// Checks if a type is a tuple.
+    let private isTupleType (t: Type) = FSharpType.IsTuple t
+
+    /// Checks if a type is an F# record.
+    let private isRecordType (t: Type) = FSharpType.IsRecord t
+
+    /// Checks if a type is an anonymous record.
+    let private isAnonymousRecordType (t: Type) =
+        t.Name.StartsWith("<>f__AnonymousType") ||
+        (t.GetCustomAttributes(typeof<CompilationMappingAttribute>, false)
+         |> Array.exists (fun attr ->
+             (attr :?> CompilationMappingAttribute).SourceConstructFlags = SourceConstructFlags.RecordType)
+         && t.Name.Contains("@"))
+
     /// Detects if a type is an option type.
     /// Returns Some innerType if so, None otherwise.
     let private tryGetOptionInfo (t: Type) : Type option =
@@ -263,8 +277,19 @@ module RouteHydration =
                         |> Option.defaultValue (Error $"Missing route parameter: {fieldName}")
                         |> Result.map wrapFn
                     | None ->
-                        failwith
-                            $"RouteHydration: Don't know how to extract field '{fieldName}' of type {fieldType.Name}"
+                        // Provide helpful error messages for unsupported types
+                        if isTupleType fieldType then
+                            failwith
+                                $"RouteHydration: Tuple types are not supported for field '{fieldName}'. Use named fields instead: '| Case of a: Guid * b: int'"
+                        elif isRecordType fieldType then
+                            failwith
+                                $"RouteHydration: Record types are not yet supported for field '{fieldName}'. Use named fields directly on the union case: '| Case of id: Guid * name: string'"
+                        elif isAnonymousRecordType fieldType then
+                            failwith
+                                $"RouteHydration: Anonymous record types are not supported for field '{fieldName}'. Use named fields directly on the union case."
+                        else
+                            failwith
+                                $"RouteHydration: Don't know how to extract field '{fieldName}' of type {fieldType.Name}. Supported: Guid, string, int, int64, bool, Query<T>, PreCondition<T>, or single-case wrapper DUs."
 
     /// Extracts a field value from route parameters based on type.
     /// Handles option types, Query types, custom extractors, primitives, and wrapper types.
