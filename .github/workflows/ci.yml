@@ -13,6 +13,7 @@ permissions:
   checks: write
   pull-requests: write
   id-token: write  # For NuGet trusted publishing (OIDC)
+  pages: write     # For GitHub Pages deployment
 
 jobs:
   build:
@@ -43,6 +44,12 @@ jobs:
 
       - name: Generate docs
         run: dotnet fsdocs build --output output/docs --clean
+
+      - name: Upload pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: output/docs
 
       - name: Test with coverage
         run: |
@@ -99,6 +106,19 @@ jobs:
           name: Test Results
           path: "**/*.trx"
           reporter: dotnet-trx
+
+  deploy-docs:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   pack:
     runs-on: ubuntu-latest
