@@ -12,8 +12,11 @@ open Microsoft.FSharp.Reflection
 type TypeExtractor = string -> Type -> HttpContext -> Result<obj, string> option
 
 /// Wrapper type to indicate a field should be extracted from query string instead of route params.
-/// Example: `| Search of query: Query<string>` extracts from `?query=...`
+/// Example: `| Search of query: QueryParam<string>` extracts from `?query=...`
 type Query<'T> = Query of 'T
+
+/// Alias for Query<'T> with a more descriptive name.
+type QueryParam<'T> = Query<'T>
 
 /// Marker type to indicate a field comes from a precondition (auth, validation, etc.)
 /// rather than from route/query parameters.
@@ -21,11 +24,14 @@ type Query<'T> = Query of 'T
 /// Example:
 /// ```fsharp
 /// type PostRoute =
-///     | List                              // No preconditions
-///     | Create of Pre<UserId>             // UserId from auth precondition
-///     | Delete of Pre<UserId> * id: Guid  // Auth + route param
+///     | List                                    // No preconditions
+///     | Create of PreCondition<UserId>          // UserId from auth precondition
+///     | Delete of PreCondition<UserId> * id: Guid  // Auth + route param
 /// ```
 type Pre<'T> = Pre of 'T
+
+/// Alias for Pre<'T> with a more descriptive name.
+type PreCondition<'T> = Pre<'T>
 
 /// A precondition that provides a value of a specific type from the HTTP context.
 /// Used for auth, validation, or any computation that should run before route handling.
