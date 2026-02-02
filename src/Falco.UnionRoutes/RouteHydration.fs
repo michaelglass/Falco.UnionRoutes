@@ -20,9 +20,7 @@ type Query<'T> = Query of 'T
 /// Examines each field in a route case and:
 /// - If the field type matches the auth type, uses the auth pipeline
 /// - Custom extractors are tried next (if provided)
-/// - If the field is Guid (or a wrapper like PostId), extracts from route params
-/// - If the field is string, extracts from route params using field name
-/// - If the field is int, extracts from route params using field name
+/// - Primitive types (Guid, string, int, int64, bool) extract from route params
 /// - If the field is Query<'T>, extracts from query string (required)
 /// - If the field is Query<'T> option, extracts from query string (optional)
 ///
@@ -262,9 +260,7 @@ module RouteHydration =
     /// The hydration function examines the route case and extracts values for each field:
     /// - Fields matching 'Auth type use the provided auth pipeline (errors preserve type)
     /// - Custom extractors are tried next (in order)
-    /// - Guid fields are extracted from route parameters by field name
-    /// - String fields are extracted from route parameters by field name
-    /// - Int fields are extracted from route parameters by field name
+    /// - Primitive types (Guid, string, int, int64, bool) extract from route params
     /// - Single-case DU wrappers (like PostId of Guid) are auto-detected
     /// - Query<'T> extracts from query string
     /// - Query<'T> option for optional query params

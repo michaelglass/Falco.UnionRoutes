@@ -93,8 +93,7 @@ let requireAuth: Pipeline<UserId, AppError> =
 
 `RouteHydration.create` automatically extracts fields based on their types:
 - Fields matching the auth type (`UserId`) use the auth pipeline
-- `Guid` fields are extracted from route params by field name
-- `string` and `int` fields work similarly
+- `Guid`, `string`, `int`, `int64`, and `bool` fields are extracted from route params by field name
 - All errors are accumulated for proper pattern matching
 
 ```fsharp
@@ -261,8 +260,7 @@ Automatically extract route parameters and auth based on field types:
 ```fsharp
 // Create a hydrator for a route type
 // - 'Auth type fields use the auth pipeline (errors preserve original type)
-// - Guid fields extract from route params by field name
-// - string/int fields work similarly
+// - Guid, string, int, int64, bool fields extract from route params by field name
 // - Single-case DU wrappers (PostId of Guid) are auto-detected
 // - Query<'T> option returns None when missing instead of error
 // - Query<'T> extracts from query string instead of route
