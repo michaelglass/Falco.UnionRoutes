@@ -64,7 +64,7 @@ type CommandResult<'a> =
 // ============================================================================
 
 module Shell =
-    let run cmd args =
+    let run (cmd: string) (args: string) =
         let psi = ProcessStartInfo(cmd, args)
         psi.RedirectStandardOutput <- true
         psi.RedirectStandardError <- true
@@ -499,8 +499,7 @@ let release (cmd: ReleaseCommand) : ReleaseOutcome =
 
                 Released tag
 
-[<EntryPoint>]
-let main argv =
+let main (argv: string array) =
     try
         let cmd = parseCommand (if argv.Length > 0 then argv.[0] else "")
 
