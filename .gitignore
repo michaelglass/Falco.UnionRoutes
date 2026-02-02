@@ -52,3 +52,6 @@ Thumbs.db
 # Generated docs
 output/
 .fsdocs/
+
+# Temp
+tmp/
