@@ -35,47 +35,70 @@ type Slug = Slug of string
 
 // Convention-based routes (no attributes needed for common patterns)
 // Fields define what each route needs:
-// - Pre<UserId> fields come from preconditions (auth, validation, etc.)
+// - PreCondition<UserId> fields come from preconditions (auth, validation, etc.)
 // - Wrapper types like PostId (single-case DU of Guid) are auto-detected
-// - Query<'T> fields extract from query string
-// - Query<'T> option returns None when query param is missing
+// - QueryParam<'T> fields extract from query string
+// - QueryParam<'T> option returns None when query param is missing
 type PostRoute =
-    | List of page: Query<int> option // GET /posts?page=2 - optional query param
+    | List of page: QueryParam<int> option // GET /posts?page=2 - optional query param
     | Detail of id: PostId // GET /posts/{id} - extracts Guid, wraps as PostId
-    | Create of Pre<UserId> // POST /posts - requires auth precondition
-    | Delete of Pre<UserId> * id: PostId // DELETE /posts/{id} - auth + PostId
-    | Patch of Pre<UserId> * id: PostId // PATCH /posts/{id} - auth + PostId
-    | [<Route(Path = "search")>] Search of query: Query<string> // GET /posts/search?query=... - required query param
+    | Create of PreCondition<UserId> // POST /posts - requires auth precondition
+    | Delete of PreCondition<UserId> * id: PostId // DELETE /posts/{id} - auth + PostId
+    | Patch of PreCondition<UserId> * id: PostId // PATCH /posts/{id} - auth + PostId
+    | Search of query: QueryParam<string> // GET /posts/search?query=... - required query param
 
 // Explicit attributes for custom paths or overriding conventions
 // Also uses wrapper types (UserId wraps Guid)
 type UserRoute =
-    | [<Route(Path = "{userId}")>] Profile of userId: UserId // Custom param name, wrapper type
-    | [<Route(RouteMethod.Put, Path = "{id}")>] Update of id: UserId // PUT instead of convention
-    | [<Route(Path = "me")>] Me // Custom static path
+    | [<Route(Path = "{userId}")>] Profile of userId: UserId // Custom param name (not {id}), wrapper type
+    | [<Route(RouteMethod.Put)>] Update of id: UserId // PUT instead of convention (path auto-generated as /{id})
+    | Me // GET /users/me - convention-based
 
 // Mix of conventions and explicit attributes
 // Also demonstrates custom type extraction with Slug
 type ApiRoute =
-    | [<Route(RouteMethod.Any, Path = "webhook")>] Webhook // Any HTTP method
-    | [<Route(Path = "v2/status")>] Status // Custom nested path
-    | [<Route(Path = "articles/{slug}")>] Article of slug: Slug // Custom type with custom extractor
+    | [<Route(RouteMethod.Any)>] Webhook // Any HTTP method, path is /api/webhook by convention
+    | [<Route(Path = "v2/status")>] Status // Custom path different from route name
+    | [<Route(Path = "articles/{slug}")>] Article of slug: Slug // Custom path with custom type extractor
 
 // Multiple preconditions example
 // Routes can require multiple different precondition types
 type AdminRoute =
-    | Dashboard of Pre<AdminId> // Admin auth only
-    | [<Route(Path = "users")>] UserList of Pre<AdminId> // Admin auth only
-    | [<Route(Path = "users/{id}")>] UserDetail of Pre<AdminId> * id: UserId // Admin + route param
-    | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of Pre<AdminId> * Pre<UserId> * id: Guid // Admin auth + current user + target user id
+    | Dashboard of PreCondition<AdminId> // GET /admin/dashboard - admin auth only
+    | Users of PreCondition<AdminId> // GET /admin/users - admin auth only
+    | [<Route(Path = "users/{id}")>] UserDetail of PreCondition<AdminId> * id: UserId // Custom path for nested resource
+    | [<Route(RouteMethod.Delete, Path = "users/{id}")>] BanUser of PreCondition<AdminId> * PreCondition<UserId> * id: Guid // DELETE method + custom path
+
+// =============================================================================
+// Nested routes with params example - /users/{userId}/items/{itemId}
+// =============================================================================
+// Demonstrates parent params + child routes pattern
+
+type ItemId = ItemId of Guid
+
+type UserItemRoute =
+    | List // GET /nested-user/{userId}/items - inherits OptionalPreCondition<AdminId>
+    | Detail of itemId: ItemId // GET /nested-user/{userId}/items/{itemId}
+    | [<SkipAllPreconditions>] Public // skips ALL optional preconditions
+    | [<SkipPrecondition(typeof<AdminId>)>] Limited // skips only OptionalPreCondition<AdminId>
+
+type UserDashboardRoute =
+    | Overview // GET /users/{userId}/dashboard
+    | Settings // GET /users/{userId}/dashboard/settings
+
+type NestedUserRoute =
+    | Items of UserItemRoute
+    | Dashboard of UserDashboardRoute
+
+type UserWithParamsRoute = NestedUser of userId: UserId * OptionalPreCondition<AdminId> * NestedUserRoute // Parent param + skippable precondition
 
 // Path-less group example - groups routes without adding a path segment
-// The empty Path = "" means these routes appear directly under /internal/
-// Each single-case route with only Pre<'T> is correctly handled (not treated as a wrapper type)
+// The empty Path = "" on Route means these routes appear at root level (no /internal prefix)
+// Each single-case route with only PreCondition<'T> is correctly handled (not treated as a wrapper type)
 type InternalApiRoute =
-    | [<Route(Path = "metrics")>] Metrics of Pre<AdminId> // GET /internal/metrics
-    | [<Route(Path = "health-deep")>] DeepHealth of Pre<AdminId> // GET /internal/health-deep
-    | [<Route(Path = "cache/clear")>] ClearCache of Pre<AdminId> // GET /internal/cache/clear
+    | Metrics of PreCondition<AdminId> // GET /metrics - convention-based path
+    | [<Route(Path = "health-deep")>] DeepHealth of PreCondition<AdminId> // GET /health-deep - custom path (not /deep-health)
+    | [<Route(Path = "cache/clear")>] ClearCache of PreCondition<AdminId> // GET /cache/clear - nested custom path
 
 type Route =
     | Root
@@ -85,6 +108,7 @@ type Route =
     | Admin of AdminRoute
     | [<Route(Path = "")>] Internal of InternalApiRoute // Path-less group - no path segment added
     | Health
+    | UserWithParams of UserWithParamsRoute // Nested routes with params demo
 
 // =============================================================================
 // 3. Error Type
@@ -175,10 +199,10 @@ let requireAdmin: Pipeline<AdminId, AppError> =
 // 6b. Route Hydration
 // =============================================================================
 // RouteHydration.create automatically extracts fields based on their types:
-// - Pre<'T> fields use matching preconditions (auth errors preserve their type)
+// - PreCondition<'T> fields use matching preconditions (auth errors preserve their type)
 // - Guid, string, int, int64, bool fields are extracted from route params
 // - Wrapper types (single-case DUs like PostId) are auto-detected
-// - Query<'T> fields extract from query string
+// - QueryParam<'T> fields extract from query string
 // - Custom extractors can handle domain-specific types like Slug
 // - All errors are accumulated and combined via combineErrors function
 
@@ -191,14 +215,19 @@ let combineErrors (errors: AppError list) =
     | [ single ] -> single // Single error preserved as-is
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
-/// Create auth precondition for Pre<UserId>
-/// The result is automatically wrapped in Pre when extracted
+/// Create auth precondition for PreCondition<UserId>
+/// The result is automatically wrapped in PreCondition when extracted
 let authPrecondition () =
     RouteHydration.forPre<UserId, AppError> requireAuth
 
-/// Create admin precondition for Pre<AdminId>
+/// Create admin precondition for PreCondition<AdminId>
 let adminPrecondition () =
     RouteHydration.forPre<AdminId, AppError> requireAdmin
+
+/// Create SKIPPABLE admin precondition for OptionalPreCondition<AdminId>
+/// Child routes can skip this with [<SkipAllPreconditions>] or [<SkipPrecondition(typeof<AdminId>)>]
+let optAdminPrecondition () =
+    RouteHydration.forOptPre<AdminId, AppError> requireAdmin
 
 /// Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
@@ -236,9 +265,14 @@ let hydrateAdmin: AdminRoute -> Pipeline<AdminRoute, AppError> =
         combineErrors
 
 /// Hydrate InternalApiRoute - admin auth only
-/// Demonstrates single-case routes with only Pre<'T> fields
+/// Demonstrates single-case routes with only PreCondition<'T> fields
 let hydrateInternal: InternalApiRoute -> Pipeline<InternalApiRoute, AppError> =
     RouteHydration.create<InternalApiRoute, AppError> [ adminPrecondition () ] [] makeError combineErrors
+
+/// Hydrate UserWithParamsRoute - demonstrates nested routes with params and OptionalPreCondition<'T>
+/// The OptionalPreCondition<AdminId> can be skipped by child routes using [<SkipAllPreconditions>]
+let hydrateUserWithParams: UserWithParamsRoute -> Pipeline<UserWithParamsRoute, AppError> =
+    RouteHydration.create<UserWithParamsRoute, AppError> [ optAdminPrecondition () ] [] makeError combineErrors
 
 // =============================================================================
 // 7. Handlers
@@ -310,7 +344,7 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
 
     let health: HttpHandler = Response.ofJson {| status = "ok" |}
 
-    let listPosts (page: Query<int> option) : HttpHandler =
+    let listPosts (page: QueryParam<int> option) : HttpHandler =
         let pageNum = page |> Option.map (fun (Query p) -> p) |> Option.defaultValue 1
 
         htmlResponse
@@ -329,7 +363,7 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                         [ Elem.a [ Attr.href $"/posts/{Guid.NewGuid()}" ] [ Text.raw "Post 2: Falco Web Framework" ] ] ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
-    let searchPosts (query: Query<string>) : HttpHandler =
+    let searchPosts (query: QueryParam<string>) : HttpHandler =
         let (Query q) = query
 
         htmlResponse
@@ -543,6 +577,121 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                cleared = true
                message = "Cache cleared" |}
 
+    // Nested routes with params handlers
+    let userItemList (userId: UserId) (adminId: AdminId option) : HttpHandler =
+        let (UserId uid) = userId
+
+        let adminStr =
+            adminId
+            |> Option.map (fun (AdminId aid) -> aid.ToString())
+            |> Option.defaultValue "none"
+
+        htmlResponse
+            "User Items"
+            [ Elem.h1 [] [ Text.raw "User Items" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
+              Elem.p [] [ Text.raw "This demonstrates nested routes with parent params: /nested-user/{userId}/items" ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let userItemDetail (userId: UserId) (itemId: ItemId) (adminId: AdminId option) : HttpHandler =
+        let (UserId uid) = userId
+        let (ItemId iid) = itemId
+
+        let adminStr =
+            adminId
+            |> Option.map (fun (AdminId aid) -> aid.ToString())
+            |> Option.defaultValue "none"
+
+        htmlResponse
+            "Item Detail"
+            [ Elem.h1 [] [ Text.raw "Item Detail" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "Item ID: " ]
+                    Elem.code [] [ Text.raw (iid.ToString()) ] ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
+              Elem.p [] [ Text.raw "This demonstrates /nested-user/{userId}/items/{itemId}" ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let userItemPublic (userId: UserId) : HttpHandler =
+        let (UserId uid) = userId
+
+        htmlResponse
+            "Public Items"
+            [ Elem.h1 [] [ Text.raw "Public Items (No Admin Required)" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Text.raw "This route uses "
+                    Elem.code [] [ Text.raw "[<SkipAllPreconditions>]" ]
+                    Text.raw " to skip all optional preconditions." ]
+              Elem.p [] [ Text.raw "No X-Admin-Id header required!" ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let userItemLimited (userId: UserId) : HttpHandler =
+        let (UserId uid) = userId
+
+        htmlResponse
+            "Limited Items"
+            [ Elem.h1 [] [ Text.raw "Limited Items (Specific Skip)" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Text.raw "This route uses "
+                    Elem.code [] [ Text.raw "[<SkipPrecondition(typeof<AdminId>)>]" ]
+                    Text.raw " to skip only OptionalPreCondition<AdminId>." ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let userDashboardOverview (userId: UserId) (adminId: AdminId option) : HttpHandler =
+        let (UserId uid) = userId
+
+        let adminStr =
+            adminId
+            |> Option.map (fun (AdminId aid) -> aid.ToString())
+            |> Option.defaultValue "none"
+
+        htmlResponse
+            "User Dashboard"
+            [ Elem.h1 [] [ Text.raw "User Dashboard" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
+    let userDashboardSettings (userId: UserId) (adminId: AdminId option) : HttpHandler =
+        let (UserId uid) = userId
+
+        let adminStr =
+            adminId
+            |> Option.map (fun (AdminId aid) -> aid.ToString())
+            |> Option.defaultValue "none"
+
+        htmlResponse
+            "User Settings"
+            [ Elem.h1 [] [ Text.raw "User Settings" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+
 // =============================================================================
 // 8. Post Handler (using hydration)
 // =============================================================================
@@ -598,7 +747,7 @@ let apiHandler (route: ApiRoute) : HttpHandler =
 let handleAdmin (route: AdminRoute) : HttpHandler =
     match route with
     | AdminRoute.Dashboard(Pre adminId) -> Handlers.adminDashboard adminId
-    | AdminRoute.UserList(Pre adminId) -> Handlers.adminUserList adminId
+    | AdminRoute.Users(Pre adminId) -> Handlers.adminUserList adminId
     | AdminRoute.UserDetail(Pre adminId, userId) -> Handlers.adminUserDetail (adminId, userId)
     | AdminRoute.BanUser(Pre adminId, Pre userId, targetId) -> Handlers.banUser (adminId, userId, targetId)
 
@@ -607,9 +756,9 @@ let adminHandler (route: AdminRoute) : HttpHandler =
     Pipeline.run toErrorResponse (hydrateAdmin route) handleAdmin
 
 // =============================================================================
-// 8e. Internal API Handler (path-less group with Pre<'T>-only routes)
+// 8e. Internal API Handler (path-less group with PreCondition<'T>-only routes)
 // =============================================================================
-// Demonstrates single-case routes where the only field is Pre<'T>
+// Demonstrates single-case routes where the only field is PreCondition<'T>
 // These should NOT be treated as wrapper types (fixed in issue #1 follow-up)
 
 let handleInternal (route: InternalApiRoute) : HttpHandler =
@@ -621,6 +770,45 @@ let handleInternal (route: InternalApiRoute) : HttpHandler =
 /// Combined: hydrate then handle
 let internalHandler (route: InternalApiRoute) : HttpHandler =
     Pipeline.run toErrorResponse (hydrateInternal route) handleInternal
+
+// =============================================================================
+// 8f. Nested User Handler (demonstrates nested routes with params + OptionalPreCondition)
+// =============================================================================
+// Shows how parent params are passed down to child handlers
+// and how OptionalPreCondition can be skipped by child routes
+
+let handleUserItem (userId: UserId) (adminIdOpt: AdminId option) (route: UserItemRoute) : HttpHandler =
+    match route with
+    | UserItemRoute.List -> Handlers.userItemList userId adminIdOpt
+    | UserItemRoute.Detail itemId -> Handlers.userItemDetail userId itemId adminIdOpt
+    | UserItemRoute.Public -> Handlers.userItemPublic userId
+    | UserItemRoute.Limited -> Handlers.userItemLimited userId
+
+let handleUserDashboard (userId: UserId) (adminIdOpt: AdminId option) (route: UserDashboardRoute) : HttpHandler =
+    match route with
+    | UserDashboardRoute.Overview -> Handlers.userDashboardOverview userId adminIdOpt
+    | UserDashboardRoute.Settings -> Handlers.userDashboardSettings userId adminIdOpt
+
+let handleNestedUser (userId: UserId) (adminIdOpt: AdminId option) (route: NestedUserRoute) : HttpHandler =
+    match route with
+    | NestedUserRoute.Items itemRoute -> handleUserItem userId adminIdOpt itemRoute
+    | NestedUserRoute.Dashboard dashRoute -> handleUserDashboard userId adminIdOpt dashRoute
+
+let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
+    match route with
+    | UserWithParamsRoute.NestedUser(userId, OptPre adminId, nestedRoute) ->
+        // Convert sentinel Guid.Empty to None, actual values to Some
+        // (Skipped OptionalPreCondition uses default value, which for AdminId is AdminId(Guid.Empty))
+        let adminIdOpt =
+            match adminId with
+            | AdminId id when id = Guid.Empty -> None
+            | AdminId _ -> Some adminId
+
+        handleNestedUser userId adminIdOpt nestedRoute
+
+/// Combined: hydrate then handle
+let userWithParamsHandler (route: UserWithParamsRoute) : HttpHandler =
+    Pipeline.run toErrorResponse (hydrateUserWithParams route) handleUserWithParams
 
 // =============================================================================
 // 9. Top-level Route Handler
@@ -645,6 +833,9 @@ let routeHandler (route: Route) : HttpHandler =
 
     // InternalApiRoute - path-less group (Path = "") with Pre<'T>-only routes
     | Route.Internal internalRoute -> internalHandler internalRoute
+
+    // UserWithParamsRoute - demonstrates nested routes with params and OptPre<'T>
+    | Route.UserWithParams userWithParamsRoute -> userWithParamsHandler userWithParamsRoute
 
 // =============================================================================
 // 10. Convert to Falco Endpoints
