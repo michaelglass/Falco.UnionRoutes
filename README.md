@@ -95,14 +95,31 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 
 ### Route Conventions
 
-| Case Name | HTTP Method |
-|-----------|-------------|
-| `Create`  | POST        |
-| `Delete`  | DELETE      |
-| `Patch`   | PATCH       |
-| others    | GET         |
+**HTTP Methods** (by case name):
+| Case Name | Method |
+|-----------|--------|
+| `Create`  | POST   |
+| `Delete`  | DELETE |
+| `Patch`   | PATCH  |
+| others    | GET    |
 
-Override with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
+**Paths** (by case name and fields):
+| Case | Path |
+|------|------|
+| `List`, `Root`, `Create`, `Show` | `/` (empty segment) |
+| `Detail of id: Guid` | `/{id}` (from field name) |
+| `UserPosts of userId: Guid * postId: Guid` | `/{userId}/{postId}` |
+| `Health` | `/health` (kebab-case) |
+| `DigestView` | `/digest-view` (kebab-case) |
+
+**Nesting** (DU fields become path prefixes):
+```fsharp
+type PostRoute = List | Detail of id: Guid
+type Route = Posts of PostRoute    // /posts, /posts/{id}
+           | Users of UserRoute    // /users, /users/{id}
+```
+
+**Override** with `[<Route(RouteMethod.Put, Path = "custom/{id}")>]`.
 
 ### Marker Types
 
