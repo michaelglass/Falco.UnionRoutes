@@ -13,8 +13,9 @@
     <Description>Type-safe routing with discriminated unions and railway-oriented handler composition for Falco</Description>
     <PackageTags>fsharp;falco;routing;union;discriminated-union;railway;web</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/michaelglass/falco-union-routes</RepositoryUrl>
+    <RepositoryUrl>https://github.com/michaelglass/Falco.UnionRoutes</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/michaelglass/Falco.UnionRoutes</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
