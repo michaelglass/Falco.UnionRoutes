@@ -419,7 +419,9 @@ module Project =
 module UI =
     let promptYesNo message =
         printf "%s [y/N] " message
-        Console.ReadLine().ToLower() = "y"
+        match Console.ReadLine() with
+        | null -> false
+        | s -> s.ToLower() = "y"
 
     let printApiChanges =
         function
