@@ -437,6 +437,70 @@ let ``Issue #1 - link with single-case wrapper should not include Item`` () =
     // Should substitute the postId, not include {Item} or extra segments
     test <@ url = "/posts/22222222-2222-2222-2222-222222222222" @>
 
+// =============================================================================
+// Nested routes with params tests
+// =============================================================================
+
+// Test types for nested routes with params
+type NestedItemId = NestedItemId of Guid
+
+type UserItemRoute =
+    | List
+    | Detail of itemId: NestedItemId
+
+type UserProfileRoute =
+    | View
+    | Edit
+
+type NestedUserRoute =
+    | Items of UserItemRoute
+    | Profile of UserProfileRoute
+
+type NestedParentRoute = Users of userId: Guid * NestedUserRoute
+
+[<Fact>]
+let ``Nested route with params includes case name in path`` () =
+    let route =
+        NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items UserItemRoute.List)
+
+    let info = RouteReflection.routeInfo route
+    // Should be /users/{userId}/items, not just /{userId}/items
+    test <@ info.Path = "/users/{userId}/items" @>
+
+[<Fact>]
+let ``Nested route with params and child detail includes all segments`` () =
+    let route =
+        NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items(UserItemRoute.Detail(NestedItemId Guid.Empty)))
+
+    let info = RouteReflection.routeInfo route
+    // Should be /users/{userId}/items/{itemId}
+    test <@ info.Path = "/users/{userId}/items/{itemId}" @>
+
+[<Fact>]
+let ``Nested route with params link substitutes values`` () =
+    let userId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    let itemId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+    let route =
+        NestedParentRoute.Users(userId, NestedUserRoute.Items(UserItemRoute.Detail(NestedItemId itemId)))
+
+    let url = RouteReflection.link route
+    test <@ url = "/users/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/items/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" @>
+
+[<Fact>]
+let ``Nested route with params enumerates all routes`` () =
+    let routes = RouteReflection.allRoutes<NestedParentRoute> ()
+    // Users has 2 children (Items, Profile), Items has 2 (List, Detail), Profile has 2 (View, Edit)
+    // Total: 4 routes
+    test <@ List.length routes = 4 @>
+
+[<Fact>]
+let ``Nested route without params still works (no case name added)`` () =
+    let route = NestedUserRoute.Items UserItemRoute.List
+    let info = RouteReflection.routeInfo route
+    // No params on Items, so just uses kebab-case of case name
+    test <@ info.Path = "/items" @>
+
 // Issue #1 follow-up: Single-case route unions with only Pre<'T> field were incorrectly
 // identified as "single-case wrapper types" because isSingleCaseWrapper wasn't checking
 // if the inner type was a primitive. This caused route enumeration to fail.
