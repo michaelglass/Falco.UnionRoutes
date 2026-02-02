@@ -126,8 +126,11 @@ let combineErrors (errors: TestError list) =
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
 // Precondition factories (create fresh each time to avoid module initialization issues)
-let userPrecondition () = RouteHydration.forPre<UserId, TestError> mockUserAuth
-let adminPrecondition () = RouteHydration.forPre<AdminId, TestError> mockAdminAuth
+let userPrecondition () =
+    RouteHydration.forPre<UserId, TestError> mockUserAuth
+
+let adminPrecondition () =
+    RouteHydration.forPre<AdminId, TestError> mockAdminAuth
 
 let hydrate () =
     RouteHydration.create<SimpleRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
@@ -162,11 +165,7 @@ let slugExtractor: TypeExtractor =
             None
 
 let hydrateCustom () =
-    RouteHydration.create<CustomTypeRoute, TestError>
-        [ userPrecondition () ]
-        [ slugExtractor ]
-        makeError
-        combineErrors
+    RouteHydration.create<CustomTypeRoute, TestError> [ userPrecondition () ] [ slugExtractor ] makeError combineErrors
 
 let hydrateNoAuth () =
     RouteHydration.create<NoAuthRoute, TestError> [] [] makeError combineErrors
@@ -226,6 +225,7 @@ let ``returns error for missing Guid param`` () =
 let ``error message contains field name for missing param`` () =
     let ctx = createMockContextWithRoute []
     let pipeline = hydrate () (SimpleRoute.Detail Guid.Empty)
+
     match pipeline ctx with
     | Error(BadRequest msg) -> Assert.Contains("id", msg)
     | Error NotAuthenticated -> Assert.Fail("Unexpected NotAuthenticated")
@@ -303,7 +303,10 @@ let ``hydrates Pre<AdminId> with admin precondition`` () =
     let adminId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+
     let result = pipeline ctx
     Assert.Equal(Ok(MultiPreRoute.NeedsAdmin(Pre(AdminId adminId))), result)
 
@@ -314,7 +317,10 @@ let ``hydrates both Pre<UserId> and Pre<AdminId>`` () =
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
     ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+
     let result = pipeline ctx
     Assert.Equal(Ok(MultiPreRoute.NeedsBoth(Pre(UserId userId), Pre(AdminId adminId))), result)
 
@@ -328,7 +334,10 @@ let ``returns correct error for missing user precondition`` () =
 [<Fact>]
 let ``returns correct error for missing admin precondition`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+
     let result = pipeline ctx
     Assert.Equal(Error Forbidden, result)
 
@@ -336,7 +345,9 @@ let ``returns correct error for missing admin precondition`` () =
 let ``accumulates errors when both preconditions fail`` () =
     let ctx = createMockContextWithRoute []
     // Neither user nor admin headers set
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+
     let result = pipeline ctx
     // combineErrors should combine both errors
     match result with
@@ -460,11 +471,14 @@ let ``documents Falco bug - TryGetInt64 overflows on large values`` () =
     // Documents https://github.com/falcoframework/Falco/issues/149
     let ctx = createMockContextWithRoute [ ("id", "9223372036854775807") ]
     let route = Falco.Request.getRoute ctx
+
     let threw =
         try
             route.TryGetInt64 "id" |> ignore
             false
-        with :? System.OverflowException -> true
+        with :? System.OverflowException ->
+            true
+
     test <@ threw @>
 
 [<Fact>]

@@ -35,10 +35,9 @@ type PreCondition<'T> = Pre<'T>
 
 /// A precondition that provides a value of a specific type from the HTTP context.
 /// Used for auth, validation, or any computation that should run before route handling.
-type Precondition<'Error> = {
-    MatchType: Type
-    Extract: HttpContext -> Result<obj, 'Error>
-}
+type Precondition<'Error> =
+    { MatchType: Type
+      Extract: HttpContext -> Result<obj, 'Error> }
 
 /// Automatic route hydration based on route type structure.
 ///
@@ -71,10 +70,8 @@ module RouteHydration =
     /// Creates a precondition for Pre<'T> that runs the given pipeline.
     /// The result is automatically wrapped in Pre.
     let forPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
-        {
-            MatchType = typeof<Pre<'T>>
-            Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (Pre v))
-        }
+        { MatchType = typeof<Pre<'T>>
+          Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (Pre v)) }
 
     /// Detects if a type is Pre<'T>.
     /// Returns Some innerType if so, None otherwise.
@@ -113,11 +110,11 @@ module RouteHydration =
 
     /// Checks if a type is an anonymous record.
     let private isAnonymousRecordType (t: Type) =
-        t.Name.StartsWith("<>f__AnonymousType") ||
-        (t.GetCustomAttributes(typeof<CompilationMappingAttribute>, false)
-         |> Array.exists (fun attr ->
-             (attr :?> CompilationMappingAttribute).SourceConstructFlags = SourceConstructFlags.RecordType)
-         && t.Name.Contains("@"))
+        t.Name.StartsWith("<>f__AnonymousType")
+        || (t.GetCustomAttributes(typeof<CompilationMappingAttribute>, false)
+            |> Array.exists (fun attr ->
+                (attr :?> CompilationMappingAttribute).SourceConstructFlags = SourceConstructFlags.RecordType)
+            && t.Name.Contains("@"))
 
     /// Detects if a type is an option type.
     /// Returns Some innerType if so, None otherwise.
@@ -157,17 +154,11 @@ module RouteHydration =
         | QueryString
 
     /// Supported primitive types for route/query extraction
-    let private supportedPrimitives = [
-        typeof<Guid>
-        typeof<string>
-        typeof<int>
-        typeof<int64>
-        typeof<bool>
-    ]
+    let private supportedPrimitives =
+        [ typeof<Guid>; typeof<string>; typeof<int>; typeof<int64>; typeof<bool> ]
 
     /// Check if a type is a supported primitive for extraction
-    let private isSupportedPrimitive (t: Type) =
-        supportedPrimitives |> List.contains t
+    let private isSupportedPrimitive (t: Type) = supportedPrimitives |> List.contains t
 
     /// Tries to parse a string value into a primitive type.
     /// Returns Ok value, Error for invalid format, or None if type not supported.
@@ -369,10 +360,8 @@ module RouteHydration =
                         fields
                         |> Array.map (fun field ->
                             match findPrecondition preconditions field.PropertyType with
-                            | Some precondition ->
-                                FromPrecondition(precondition.Extract ctx)
-                            | None ->
-                                FromExtraction(extractField extractors field.Name field.PropertyType ctx))
+                            | Some precondition -> FromPrecondition(precondition.Extract ctx)
+                            | None -> FromExtraction(extractField extractors field.Name field.PropertyType ctx))
 
                     // Collect all errors
                     let allErrors =

@@ -184,10 +184,12 @@ let combineErrors (errors: AppError list) =
 
 /// Create auth precondition for Pre<UserId>
 /// The result is automatically wrapped in Pre when extracted
-let authPrecondition () = RouteHydration.forPre<UserId, AppError> requireAuth
+let authPrecondition () =
+    RouteHydration.forPre<UserId, AppError> requireAuth
 
 /// Create admin precondition for Pre<AdminId>
-let adminPrecondition () = RouteHydration.forPre<AdminId, AppError> requireAdmin
+let adminPrecondition () =
+    RouteHydration.forPre<AdminId, AppError> requireAdmin
 
 /// Hydrate PostRoute - extracts auth and route params automatically
 let hydratePost: PostRoute -> Pipeline<PostRoute, AppError> =
