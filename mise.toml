@@ -65,15 +65,13 @@ depends = ["build"]
 [tasks.release]
 description = "Create and push a release tag (e.g., `mise run release alpha --publish -y`)"
 run = """
-if [[ "$*" == *"--publish"* ]]; then
-  if [[ ! -f .nuget-api-key ]]; then
-    echo "Error: .nuget-api-key file not found."
-    echo "Create it with your NuGet API key: echo 'your-key' > .nuget-api-key"
-    echo "Get a key from: https://www.nuget.org/account/apikeys"
-    exit 1
-  fi
-  export NUGET_API_KEY=$(cat .nuget-api-key)
+if [[ ! -f .nuget-api-key ]]; then
+  echo "Error: .nuget-api-key file not found."
+  echo "Create it with your NuGet API key: echo 'your-key' > .nuget-api-key"
+  echo "Get a key from: https://www.nuget.org/account/apikeys"
+  exit 1
 fi
+export NUGET_API_KEY=$(cat .nuget-api-key)
 dotnet fsi scripts/release.fsx -- $@
 """
 depends = ["ci"]

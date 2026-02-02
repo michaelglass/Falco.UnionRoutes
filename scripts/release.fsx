@@ -235,19 +235,27 @@ module Api =
         extractFromAssembly (Path.GetFullPath dllPath)
 
     let extractFromTag (tag: string) : ApiSignature list =
-        let currentCommit = Shell.runOrFail "git" "rev-parse HEAD"
+        // Use a temp directory to checkout the tag without affecting working copy
+        let tempDir = Path.Combine(Path.GetTempPath(), sprintf "falco-api-check-%s" (Guid.NewGuid().ToString("N").[..7]))
 
         try
-            Shell.runSilent "git" "stash" |> ignore
-            Shell.runOrFail "git" (sprintf "checkout %s --quiet" tag) |> ignore
-            Shell.runOrFail "dotnet" "build -c Release --verbosity quiet" |> ignore
-            let api = extractFromAssembly (Path.GetFullPath dllPath)
-            Shell.runOrFail "git" (sprintf "checkout %s --quiet" currentCommit) |> ignore
-            Shell.runSilent "git" "stash pop" |> ignore
+            // Clone the repo at the specific tag into temp dir
+            Shell.runOrFail "git" (sprintf "clone --depth 1 --branch %s . %s" tag tempDir) |> ignore
+
+            // Build in the temp directory
+            Shell.runOrFail "dotnet" (sprintf "build %s/src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj -c Release --verbosity quiet" tempDir) |> ignore
+
+            let tempDllPath = Path.Combine(tempDir, "src/Falco.UnionRoutes/bin/Release/net10.0/Falco.UnionRoutes.dll")
+            let api = extractFromAssembly tempDllPath
+
+            // Cleanup
+            Directory.Delete(tempDir, true)
             api
         with ex ->
-            Shell.runSilent "git" (sprintf "checkout %s --quiet" currentCommit) |> ignore
-            Shell.runSilent "git" "stash pop" |> ignore
+            // Cleanup on error
+            if Directory.Exists(tempDir) then
+                try Directory.Delete(tempDir, true) with _ -> ()
+            printfn "Warning: Failed to extract API from tag %s: %s" tag ex.Message
             []
 
     let compare (baseline: ApiSignature list) (current: ApiSignature list) : ApiChange =
