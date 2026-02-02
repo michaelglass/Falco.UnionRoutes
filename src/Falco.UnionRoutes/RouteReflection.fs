@@ -68,14 +68,22 @@ module RouteReflection =
         && t.GetGenericArguments().[0].IsGenericType
         && t.GetGenericArguments().[0].GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Query`1"
 
+    /// Check if a type is a single-case DU wrapper (e.g., PostId of Guid)
+    /// These are used for type-safe IDs, not for route hierarchy
+    let private isSingleCaseWrapper (t: Type) =
+        FSharpType.IsUnion(t)
+        && let cases = FSharpType.GetUnionCases(t) in
+           cases.Length = 1 && cases.[0].GetFields().Length = 1
+
     /// Check if a type is a nested route union (for hierarchy traversal)
-    /// Excludes: strings, options, Pre<'T>, Query<'T>
+    /// Excludes: strings, options, Pre<'T>, Query<'T>, single-case wrappers
     let private isNestedRouteUnion (t: Type) =
         FSharpType.IsUnion(t)
         && t <> typeof<string>
         && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
         && not (isPreconditionType t)
         && not (isQueryType t)
+        && not (isSingleCaseWrapper t)
 
     /// Check if a field should be excluded from route path (nested route unions, preconditions, query params)
     let private isNonRouteField (f: Reflection.PropertyInfo) =
@@ -237,6 +245,20 @@ module RouteReflection =
             let nestedUnionFieldIndex =
                 fieldInfos |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
 
+            // Unwrap single-case wrapper types to get the inner value for string conversion
+            let unwrapValue (v: obj) : obj =
+                if isNull v then
+                    v
+                else
+                    let vType = v.GetType()
+
+                    if isSingleCaseWrapper vType then
+                        let cases = FSharpType.GetUnionCases(vType)
+                        let _, fields = FSharpValue.GetUnionFields(v, vType)
+                        if fields.Length > 0 then fields.[0] else v
+                    else
+                        v
+
             // Substitute field values into the segment pattern
             // Only include route path fields (exclude nested unions, preconditions, query params)
             let segment =
@@ -251,7 +273,7 @@ module RouteReflection =
                             let value = fieldValues.[i]
 
                             let valueStr =
-                                match box value with
+                                match unwrapValue value with
                                 | null -> ""
                                 | v -> v.ToString()
 

@@ -404,3 +404,35 @@ let ``allRoutes uses zero default for int64 params`` () =
     match routes with
     | [ Int64Route bigNum ] -> test <@ bigNum = 0L @>
     | _ -> failwith "Expected single route"
+
+// =============================================================================
+// Regression tests
+// =============================================================================
+
+// Issue #1: Single-case DU wrapper types incorrectly treated as nested route unions
+// https://github.com/michaelglass/Falco.UnionRoutes/issues/1
+
+type WrappedPostId = WrappedPostId of Guid
+type WrappedUserId = WrappedUserId of Guid
+
+type Issue1Route =
+    | [<Route(RouteMethod.Get, Path = "posts")>] List
+    | [<Route(RouteMethod.Get, Path = "posts/{id}")>] Detail of Pre<WrappedUserId> * id: WrappedPostId
+
+[<Fact>]
+let ``Issue #1 - Single-case wrapper with Pre should not append {Item} to path`` () =
+    let route =
+        Issue1Route.Detail(Pre(WrappedUserId(Guid.NewGuid())), WrappedPostId(Guid.NewGuid()))
+
+    let info = RouteReflection.routeInfo route
+    // Should be /posts/{id}, not /posts/{id}/{Item}
+    test <@ info.Path = "/posts/{id}" @>
+
+[<Fact>]
+let ``Issue #1 - link with single-case wrapper should not include Item`` () =
+    let userId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+    let postId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+    let route = Issue1Route.Detail(Pre(WrappedUserId(userId)), WrappedPostId(postId))
+    let url = RouteReflection.link route
+    // Should substitute the postId, not include {Item} or extra segments
+    test <@ url = "/posts/22222222-2222-2222-2222-222222222222" @>
