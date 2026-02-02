@@ -43,7 +43,7 @@ jobs:
         run: dotnet fsharplint lint Falco.UnionRoutes.sln
 
       - name: Generate docs
-        run: dotnet fsdocs build --output output/docs --clean --parameters root /Falco.UnionRoutes/
+        run: dotnet fsdocs build --output output/docs --clean --parameters root /Falco.UnionRoutes/ fsdocs-logo-src "" fsdocs-favicon-src ""
 
       - name: Upload pages artifact
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
