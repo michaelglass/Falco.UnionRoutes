@@ -207,3 +207,200 @@ let ``All enumerated routes have valid RouteAttribute`` () =
             | Some _ -> None)
 
     test <@ List.isEmpty invalidRoutes @>
+
+// =============================================================================
+// link function tests
+// =============================================================================
+
+[<Fact>]
+let ``link generates concrete URL for parameterized route`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+    let url = RouteReflection.link (PostRoute.Detail id)
+    test <@ url = "/posts/12345678-1234-1234-1234-123456789abc" @>
+
+[<Fact>]
+let ``link generates root path for List route`` () =
+    let url = RouteReflection.link PostRoute.List
+    test <@ url = "/posts" @>
+
+[<Fact>]
+let ``link generates correct path for nested routes`` () =
+    let id = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+    let url = RouteReflection.link (TestRoute.Api(ApiRoute.Posts(PostRoute.Detail id)))
+    test <@ url = "/posts/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" @>
+
+[<Fact>]
+let ``link returns root for empty path route`` () =
+    let url = RouteReflection.link TestRoute.Home
+    test <@ url = "/" @>
+
+// =============================================================================
+// Convention-based routing tests (no attributes)
+// =============================================================================
+
+/// Routes using naming conventions instead of attributes
+type ConventionRoute =
+    | Root
+    | List
+    | Create
+    | Delete of id: Guid
+    | Patch of id: Guid
+    | DigestView
+    | HealthCheck
+
+[<Fact>]
+let ``Root convention returns empty path with GET`` () =
+    let info = RouteReflection.routeInfo ConventionRoute.Root
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``List convention returns empty path with GET`` () =
+    let info = RouteReflection.routeInfo ConventionRoute.List
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``Create convention returns empty path with POST`` () =
+    let info = RouteReflection.routeInfo ConventionRoute.Create
+    test <@ info.Method = HttpMethod.Post @>
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``Delete convention returns DELETE method`` () =
+    let info = RouteReflection.routeInfo (ConventionRoute.Delete(Guid.Empty))
+    test <@ info.Method = HttpMethod.Delete @>
+    test <@ info.Path = "/{id}" @>
+
+[<Fact>]
+let ``Patch convention returns PATCH method`` () =
+    let info = RouteReflection.routeInfo (ConventionRoute.Patch(Guid.Empty))
+    test <@ info.Method = HttpMethod.Patch @>
+    test <@ info.Path = "/{id}" @>
+
+[<Fact>]
+let ``Regular case name converts to kebab-case path`` () =
+    let info = RouteReflection.routeInfo ConventionRoute.DigestView
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/digest-view" @>
+
+[<Fact>]
+let ``HealthCheck converts to health-check`` () =
+    let info = RouteReflection.routeInfo ConventionRoute.HealthCheck
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/health-check" @>
+
+// =============================================================================
+// toHttpMethod tests
+// =============================================================================
+
+[<Fact>]
+let ``toHttpMethod converts all RouteMethod values`` () =
+    test <@ RouteReflection.toHttpMethod RouteMethod.Get = HttpMethod.Get @>
+    test <@ RouteReflection.toHttpMethod RouteMethod.Post = HttpMethod.Post @>
+    test <@ RouteReflection.toHttpMethod RouteMethod.Put = HttpMethod.Put @>
+    test <@ RouteReflection.toHttpMethod RouteMethod.Delete = HttpMethod.Delete @>
+    test <@ RouteReflection.toHttpMethod RouteMethod.Patch = HttpMethod.Patch @>
+    test <@ RouteReflection.toHttpMethod RouteMethod.Any = HttpMethod.Any @>
+
+// =============================================================================
+// toFalcoMethod tests
+// =============================================================================
+
+[<Fact>]
+let ``toFalcoMethod returns function for all HTTP methods`` () =
+    // We can't compare functions directly, but we can verify they produce valid endpoints
+    let testPath = "/test"
+
+    let handler: Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    // Just verify each method returns a function that produces an endpoint without error
+    let _getEndpoint = RouteReflection.toFalcoMethod HttpMethod.Get testPath handler
+    let _postEndpoint = RouteReflection.toFalcoMethod HttpMethod.Post testPath handler
+    let _putEndpoint = RouteReflection.toFalcoMethod HttpMethod.Put testPath handler
+
+    let _deleteEndpoint =
+        RouteReflection.toFalcoMethod HttpMethod.Delete testPath handler
+
+    let _patchEndpoint = RouteReflection.toFalcoMethod HttpMethod.Patch testPath handler
+    let _anyEndpoint = RouteReflection.toFalcoMethod HttpMethod.Any testPath handler
+    // If we got here without exception, all methods work
+    test <@ true @>
+
+// =============================================================================
+// endpoints function tests
+// =============================================================================
+
+type SimpleRoute =
+    | Home
+    | About
+
+[<Fact>]
+let ``endpoints generates HttpEndpoint list from handler`` () =
+    let handler (_route: SimpleRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let endpoints = RouteReflection.endpoints handler
+    test <@ List.length endpoints = 2 @>
+
+// =============================================================================
+// Multiple route parameters tests
+// =============================================================================
+
+type MultiParamRoute =
+    | [<Route(RouteMethod.Get, Path = "{a}/{b}")>] TwoParams of a: Guid * b: Guid
+    | Edit of a: Guid * b: int
+
+[<Fact>]
+let ``Route with multiple parameters includes all in path`` () =
+    let info =
+        RouteReflection.routeInfo (MultiParamRoute.TwoParams(Guid.Empty, Guid.Empty))
+
+    test <@ info.Path = "/{a}/{b}" @>
+
+[<Fact>]
+let ``Convention route infers multiple parameters`` () =
+    let info = RouteReflection.routeInfo (MultiParamRoute.Edit(Guid.Empty, 0))
+    test <@ info.Path = "/{a}/{b}" @>
+
+[<Fact>]
+let ``link substitutes multiple parameters`` () =
+    let a = Guid.Parse("11111111-1111-1111-1111-111111111111")
+    let b = Guid.Parse("22222222-2222-2222-2222-222222222222")
+    let url = RouteReflection.link (MultiParamRoute.TwoParams(a, b))
+    test <@ url = "/11111111-1111-1111-1111-111111111111/22222222-2222-2222-2222-222222222222" @>
+
+// =============================================================================
+// Default value tests for allRoutes
+// =============================================================================
+
+type RouteWithStringParam = StringRoute of name: string
+
+type RouteWithIntParam = IntRoute of count: int
+
+type RouteWithInt64Param = Int64Route of bigNum: int64
+
+[<Fact>]
+let ``allRoutes uses empty string default for string params`` () =
+    let routes = RouteReflection.allRoutes<RouteWithStringParam> ()
+
+    match routes with
+    | [ StringRoute name ] -> test <@ name = "" @>
+    | _ -> failwith "Expected single route"
+
+[<Fact>]
+let ``allRoutes uses zero default for int params`` () =
+    let routes = RouteReflection.allRoutes<RouteWithIntParam> ()
+
+    match routes with
+    | [ IntRoute count ] -> test <@ count = 0 @>
+    | _ -> failwith "Expected single route"
+
+[<Fact>]
+let ``allRoutes uses zero default for int64 params`` () =
+    let routes = RouteReflection.allRoutes<RouteWithInt64Param> ()
+
+    match routes with
+    | [ Int64Route bigNum ] -> test <@ bigNum = 0L @>
+    | _ -> failwith "Expected single route"
