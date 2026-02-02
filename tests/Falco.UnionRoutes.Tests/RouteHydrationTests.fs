@@ -691,3 +691,157 @@ let ``hydration succeeds when all fields valid`` () =
     let ctx = createMockContextWithRoute [ ("a", id.ToString()); ("b", "42") ]
     let pipeline = hydrateMultiField () (MultiFieldRoute.TwoRequired(Guid.Empty, 0))
     test <@ pipeline ctx = Ok(MultiFieldRoute.TwoRequired(id, 42)) @>
+
+// =============================================================================
+// OptPre<'T> tests (skippable preconditions)
+// =============================================================================
+
+// Routes using OptPre<'T> for skippable preconditions
+type OptPreRoute =
+    | WithOptAuth of OptPre<UserId>
+    | WithBothPreTypes of Pre<AdminId> * OptPre<UserId>
+    | WithOptAuthAndId of OptPre<UserId> * id: Guid
+
+// Nested routes demonstrating skip behavior
+type ChildRoute =
+    | Normal
+    | [<SkipAllPreconditions>] Public
+    | [<SkipPrecondition(typeof<UserId>)>] PartiallyPublic
+
+type ParentWithOptPre = Children of OptPre<UserId> * ChildRoute
+
+type ParentWithBothPre = Children of Pre<AdminId> * OptPre<UserId> * ChildRoute
+
+let optPrePrecondition () =
+    RouteHydration.forOptPre<UserId, TestError> mockUserAuth
+
+let hydrateOptPre () =
+    RouteHydration.create<OptPreRoute, TestError> [ optPrePrecondition () ] [] makeError combineErrors
+
+let hydrateOptPreWithAdmin () =
+    RouteHydration.create<OptPreRoute, TestError>
+        [ optPrePrecondition (); adminPrecondition () ]
+        []
+        makeError
+        combineErrors
+
+let hydrateParentWithOptPre () =
+    RouteHydration.create<ParentWithOptPre, TestError> [ optPrePrecondition () ] [] makeError combineErrors
+
+let hydrateParentWithBothPre () =
+    RouteHydration.create<ParentWithBothPre, TestError>
+        [ adminPrecondition (); optPrePrecondition () ]
+        []
+        makeError
+        combineErrors
+
+[<Fact>]
+let ``OptPre field hydrates from precondition when authenticated`` () =
+    let userId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-User-Id", userId.ToString())
+    let pipeline = hydrateOptPre () (OptPreRoute.WithOptAuth(OptPre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Ok(OptPreRoute.WithOptAuth(OptPre(UserId userId))), result)
+
+[<Fact>]
+let ``OptPre field returns error when not authenticated (without skip)`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrateOptPre () (OptPreRoute.WithOptAuth(OptPre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Error NotAuthenticated, result)
+
+[<Fact>]
+let ``OptPre with SkipAllPreconditions provides sentinel value`` () =
+    let ctx = createMockContextWithRoute []
+    // No auth header - would normally fail
+    let pipeline =
+        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.Public))
+
+    let result = pipeline ctx
+    // Should succeed because OptPre is skipped - provides sentinel value
+    match result with
+    | Ok(ParentWithOptPre.Children(OptPre(UserId uid), ChildRoute.Public)) ->
+        // Sentinel value should be Guid.Empty (default for value type inside wrapper)
+        test <@ uid = Guid.Empty @>
+    | Ok _ -> Assert.Fail("Unexpected route structure")
+    | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
+
+[<Fact>]
+let ``OptPre without skip still requires authentication`` () =
+    let ctx = createMockContextWithRoute []
+    // No auth header - should fail because ChildRoute.Normal doesn't skip
+    let pipeline =
+        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.Normal))
+
+    let result = pipeline ctx
+    Assert.Equal(Error NotAuthenticated, result)
+
+[<Fact>]
+let ``Pre is NOT affected by SkipAllPreconditions`` () =
+    let ctx = createMockContextWithRoute []
+    // No auth headers - Pre<AdminId> should still fail even with SkipAllPreconditions on child
+    let pipeline =
+        hydrateParentWithBothPre
+            ()
+            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Public))
+
+    let result = pipeline ctx
+    // Should fail because Pre<AdminId> always runs (not skippable)
+    Assert.Equal(Error Forbidden, result)
+
+[<Fact>]
+let ``Pre runs but OptPre skipped with SkipAllPreconditions`` () =
+    let adminId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
+    // Admin auth provided, but no user auth - OptPre should be skipped
+    let pipeline =
+        hydrateParentWithBothPre
+            ()
+            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Public))
+
+    let result = pipeline ctx
+
+    match result with
+    | Ok(ParentWithBothPre.Children(Pre(AdminId aid), OptPre(UserId uid), ChildRoute.Public)) ->
+        test <@ aid = adminId @>
+        test <@ uid = Guid.Empty @> // Sentinel value
+    | Ok _ -> Assert.Fail("Unexpected route structure")
+    | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
+
+[<Fact>]
+let ``SkipPrecondition skips specific OptPre type`` () =
+    let ctx = createMockContextWithRoute []
+    // No auth header - OptPre<UserId> should be skipped for PartiallyPublic
+    let pipeline =
+        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.PartiallyPublic))
+
+    let result = pipeline ctx
+
+    match result with
+    | Ok(ParentWithOptPre.Children(OptPre(UserId uid), ChildRoute.PartiallyPublic)) -> test <@ uid = Guid.Empty @> // Sentinel value
+    | Ok _ -> Assert.Fail("Unexpected route structure")
+    | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
+
+[<Fact>]
+let ``Both Pre and OptPre work when both headers provided`` () =
+    let adminId = Guid.NewGuid()
+    let userId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
+    ctx.Request.Headers.Append("X-User-Id", userId.ToString())
+
+    let pipeline =
+        hydrateParentWithBothPre
+            ()
+            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Normal))
+
+    let result = pipeline ctx
+
+    match result with
+    | Ok(ParentWithBothPre.Children(Pre(AdminId aid), OptPre(UserId uid), ChildRoute.Normal)) ->
+        test <@ aid = adminId @>
+        test <@ uid = userId @>
+    | Ok _ -> Assert.Fail("Unexpected route structure")
+    | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")

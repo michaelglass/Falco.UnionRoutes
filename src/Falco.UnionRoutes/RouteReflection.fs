@@ -55,6 +55,12 @@ module RouteReflection =
         t.IsGenericType
         && t.GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.Pre`1"
 
+    /// Check if a type is OptPre<'T> (skippable precondition marker - should not be in route path)
+    /// Detected by name since OptPre<'T> is defined in RouteHydration.fs (compiled later)
+    let private isOptionalPreconditionType (t: Type) =
+        t.IsGenericType
+        && t.GetGenericTypeDefinition().FullName = "Falco.UnionRoutes.OptPre`1"
+
     /// Check if a type is Query<'T> (query parameter - should not be in route path)
     /// Detected by name since Query<'T> is defined in RouteHydration.fs (compiled later)
     let private isQueryType (t: Type) =
@@ -84,42 +90,54 @@ module RouteReflection =
            && supportedPrimitives |> List.contains (cases.[0].GetFields().[0].PropertyType)
 
     /// Check if a type is a nested route union (for hierarchy traversal)
-    /// Excludes: strings, options, Pre<'T>, Query<'T>, single-case wrappers
+    /// Excludes: strings, options, Pre<'T>, OptPre<'T>, Query<'T>, OptQuery<'T>, single-case wrappers
     let private isNestedRouteUnion (t: Type) =
         FSharpType.IsUnion(t)
         && t <> typeof<string>
         && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
         && not (isPreconditionType t)
+        && not (isOptionalPreconditionType t)
         && not (isQueryType t)
+        && not (isOptionalQueryType t)
         && not (isSingleCaseWrapper t)
 
     /// Check if a field should be excluded from route path (nested route unions, preconditions, query params)
     let private isNonRouteField (f: Reflection.PropertyInfo) =
         isNestedRouteUnion f.PropertyType
         || isPreconditionType f.PropertyType
+        || isOptionalPreconditionType f.PropertyType
         || isQueryType f.PropertyType
         || isOptionalQueryType f.PropertyType
 
     /// Infer path segment from case fields (e.g., "of id: Guid" -> "{id}")
-    /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
+    /// Excludes: nested route unions, Pre<'T> (preconditions), OptPre<'T> (skippable preconditions), Query<'T> (query params)
+    /// When there are BOTH params AND nested union, includes case name as prefix: "users/{userId}"
     let private inferPathFromFields (case: UnionCaseInfo) : string option =
         let fields = case.GetFields()
 
         if fields.Length = 0 then
             None
         elif fields.Length = 1 && isNestedRouteUnion fields.[0].PropertyType then
-            None // Nested route union, not a path parameter
+            None // Nested route union only, not a path parameter
         else
             // Filter out non-route fields (nested unions, preconditions, query params)
             let pathFields = fields |> Array.filter (fun f -> not (isNonRouteField f))
 
+            let hasNestedUnion =
+                fields |> Array.exists (fun f -> isNestedRouteUnion f.PropertyType)
+
             if pathFields.Length = 0 then
                 None
             else
-                pathFields
-                |> Array.map (fun f -> "{" + f.Name + "}")
-                |> String.concat "/"
-                |> Some
+                let paramPath =
+                    pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
+
+                // Include case name when there's both params AND nested union
+                // e.g., Users of userId: UserId * UserRoute -> "users/{userId}"
+                if hasNestedUnion then
+                    Some(toKebabCase case.Name + "/" + paramPath)
+                else
+                    Some paramPath
 
     /// Check if a case has any route path fields (i.e., typed arguments like "of id: Guid")
     /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)

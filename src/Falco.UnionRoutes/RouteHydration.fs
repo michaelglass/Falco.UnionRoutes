@@ -19,7 +19,8 @@ type Query<'T> = Query of 'T
 type QueryParam<'T> = Query<'T>
 
 /// Marker type to indicate a field comes from a precondition (auth, validation, etc.)
-/// rather than from route/query parameters.
+/// rather than from route/query parameters. Pre<'T> is STRICT - it always runs
+/// and cannot be skipped by child routes.
 ///
 /// Example:
 /// ```fsharp
@@ -32,6 +33,31 @@ type Pre<'T> = Pre of 'T
 
 /// Alias for Pre<'T> with a more descriptive name.
 type PreCondition<'T> = Pre<'T>
+
+/// Marker type for a SKIPPABLE precondition. Child routes can opt out using
+/// [<SkipAllPreconditions>] or [<SkipPrecondition(typeof<T>)>] attributes.
+/// When skipped, the handler should ignore the value with _ pattern.
+///
+/// Example:
+/// ```fsharp
+/// type UserItemRoute =
+///     | List                                    // inherits parent preconditions
+///     | [<SkipAllPreconditions>] Public         // skips OptPre, handler uses _
+///
+/// type Route =
+///     | Users of Pre<AdminId> * OptPre<UserId> * UserRoute
+///
+/// // Handler:
+/// match route with
+/// | Users (Pre adminId, _, Items Public) ->
+///     // adminId always verified (Pre can't skip)
+///     // userId skipped, use _ pattern
+///     handlePublic adminId
+/// ```
+type OptPre<'T> = OptPre of 'T
+
+/// Alias for OptPre<'T> with a more descriptive name.
+type OptionalPreCondition<'T> = OptPre<'T>
 
 /// A precondition that provides a value of a specific type from the HTTP context.
 /// Used for auth, validation, or any computation that should run before route handling.
@@ -73,10 +99,25 @@ module RouteHydration =
         { MatchType = typeof<Pre<'T>>
           Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (Pre v)) }
 
+    /// Creates a precondition for OptPre<'T> that runs the given pipeline.
+    /// The result is automatically wrapped in OptPre.
+    /// This precondition can be skipped by child routes using skip attributes.
+    let forOptPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
+        { MatchType = typeof<OptPre<'T>>
+          Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (OptPre v)) }
+
     /// Detects if a type is Pre<'T>.
     /// Returns Some innerType if so, None otherwise.
     let private tryGetPreInfo (t: Type) : Type option =
         if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Pre<_>> then
+            Some(t.GetGenericArguments().[0])
+        else
+            None
+
+    /// Detects if a type is OptPre<'T>.
+    /// Returns Some innerType if so, None otherwise.
+    let private tryGetOptPreInfo (t: Type) : Type option =
+        if t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<OptPre<_>> then
             Some(t.GetGenericArguments().[0])
         else
             None
@@ -131,6 +172,76 @@ module RouteHydration =
             Some(t.GetGenericArguments().[0])
         else
             None
+
+    // =========================================================================
+    // Nested route union detection
+    // =========================================================================
+
+    /// Check if a type is a nested route union (for hierarchy traversal)
+    /// Excludes: strings, options, Pre<'T>, OptPre<'T>, Query<'T>, single-case wrappers
+    let private isNestedRouteUnion (t: Type) =
+        FSharpType.IsUnion(t)
+        && t <> typeof<string>
+        && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
+        && not (tryGetPreInfo t |> Option.isSome)
+        && not (tryGetOptPreInfo t |> Option.isSome)
+        && not (tryGetQueryInfo t |> Option.isSome)
+        && not (tryGetWrapperInfo t |> Option.isSome)
+
+    // =========================================================================
+    // Skip attribute detection
+    // =========================================================================
+
+    /// Check if all OptPre preconditions should be skipped for a case
+    let private shouldSkipAllOptPreconditions (caseInfo: UnionCaseInfo) : bool =
+        caseInfo.GetCustomAttributes(typeof<SkipAllPreconditionsAttribute>)
+        |> Array.isEmpty
+        |> not
+
+    /// Get list of OptPre inner types to skip for a case
+    let private getSkippedPreconditionTypes (caseInfo: UnionCaseInfo) : Type list =
+        caseInfo.GetCustomAttributes(typeof<SkipPreconditionAttribute>)
+        |> Array.map (fun a -> (a :?> SkipPreconditionAttribute).PreconditionType)
+        |> Array.toList
+
+    /// Check if a specific OptPre type should be skipped
+    let private shouldSkipOptPrecondition (caseInfo: UnionCaseInfo) (innerType: Type) : bool =
+        shouldSkipAllOptPreconditions caseInfo
+        || getSkippedPreconditionTypes caseInfo |> List.contains innerType
+
+    /// Walk route hierarchy to find the leaf case info
+    /// Returns the deepest union case in the route hierarchy
+    let rec private findLeafCaseInfo (value: obj) : UnionCaseInfo =
+        let valueType = value.GetType()
+
+        if not (FSharpType.IsUnion(valueType)) then
+            failwith $"Expected union type, got {valueType.Name}"
+        else
+            let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+            let fields = caseInfo.GetFields()
+
+            // Check if any field is a nested route union
+            let nestedUnionFieldIndex =
+                fields
+                |> Array.tryFindIndex (fun f ->
+                    FSharpType.IsUnion(f.PropertyType)
+                    && f.PropertyType <> typeof<string>
+                    && not (
+                        f.PropertyType.IsGenericType
+                        && f.PropertyType.GetGenericTypeDefinition() = typedefof<option<_>>
+                    )
+                    && not (tryGetPreInfo f.PropertyType |> Option.isSome)
+                    && not (tryGetOptPreInfo f.PropertyType |> Option.isSome)
+                    && not (tryGetQueryInfo f.PropertyType |> Option.isSome)
+                    && not (tryGetWrapperInfo f.PropertyType |> Option.isSome))
+
+            match nestedUnionFieldIndex with
+            | Some idx ->
+                let nestedValue = fieldValues.[idx]
+                findLeafCaseInfo nestedValue
+            | None ->
+                // This is the leaf case
+                caseInfo
 
     /// Creates a Some value boxed as option<'T>
     let private boxSome (innerType: Type) (value: obj) : obj =
@@ -315,6 +426,31 @@ module RouteHydration =
     let private findPrecondition (preconditions: Precondition<'Error> list) (fieldType: Type) =
         preconditions |> List.tryFind (fun p -> p.MatchType = fieldType)
 
+    /// Creates a default value for a type, handling wrapper types recursively.
+    let rec private createDefaultValue (t: Type) : obj =
+        if t.IsValueType then
+            Activator.CreateInstance(t)
+        elif t = typeof<string> then
+            box ""
+        else
+            // Check if it's a single-case DU wrapper
+            match tryGetWrapperInfo t with
+            | Some(innerType, wrapFn) ->
+                // Recursively create default for inner type, then wrap
+                let innerDefault = createDefaultValue innerType
+                wrapFn innerDefault
+            | None ->
+                // For other reference types, use null
+                null
+
+    /// Creates a sentinel (default) value for an OptPre<'T> when skipped.
+    /// Returns OptPre(default<'T>) boxed as obj.
+    let private createSkippedOptPreValue (optPreType: Type) : obj =
+        let innerType = optPreType.GetGenericArguments().[0]
+        let defaultValue = createDefaultValue innerType
+        let optPreCase = FSharpType.GetUnionCases(optPreType).[0]
+        FSharpValue.MakeUnion(optPreCase, [| defaultValue |])
+
     /// Result of extracting a single field value.
     /// Each field is either from a precondition or from route/query extraction.
     type private FieldResult<'Error> =
@@ -325,12 +461,19 @@ module RouteHydration =
     /// All errors are accumulated and combined using combineErrors.
     ///
     /// The hydration function examines the route case and extracts values for each field:
-    /// - Fields of type Pre<'T> use the matching precondition (errors preserve type)
+    /// - Fields of type Pre<'T> use the matching precondition (errors preserve type) - ALWAYS runs
+    /// - Fields of type OptPre<'T> use the matching precondition, but can be skipped by child routes
     /// - Custom extractors are tried next (in order)
     /// - Primitive types (Guid, string, int, int64, bool) extract from route params
     /// - Single-case DU wrappers (like PostId of Guid) are auto-detected
     /// - Query<'T> extracts from query string
     /// - Query<'T> option for optional query params
+    ///
+    /// Skip behavior for OptPre<'T>:
+    /// - Child routes can use [<SkipAllPreconditions>] to skip all OptPre preconditions
+    /// - Child routes can use [<SkipPrecondition(typeof<T>)>] to skip specific OptPre<T>
+    /// - Pre<'T> (strict preconditions) are NEVER affected by skip attributes
+    /// - When skipped, OptPre provides a sentinel value (handler should ignore with _ pattern)
     ///
     /// Error handling:
     /// - Precondition errors preserve their original type
@@ -348,20 +491,35 @@ module RouteHydration =
         fun (route: 'Route) ->
             fun (ctx: HttpContext) ->
                 // Get the union case and current field values
-                let caseInfo, _ = FSharpValue.GetUnionFields(route, routeType)
+                let caseInfo, fieldValues = FSharpValue.GetUnionFields(route, routeType)
                 let fields = caseInfo.GetFields()
 
                 if fields.Length = 0 then
                     // No fields to extract - just return the route as-is
                     Ok route
                 else
-                    // Extract each field - either from precondition or route/query params
+                    // Find the leaf case to check for skip attributes
+                    let leafCaseInfo = findLeafCaseInfo (box route)
+
+                    // Extract each field - either from precondition, route/query params, or pass-through for nested unions
                     let fieldResults =
                         fields
-                        |> Array.map (fun field ->
-                            match findPrecondition preconditions field.PropertyType with
-                            | Some precondition -> FromPrecondition(precondition.Extract ctx)
-                            | None -> FromExtraction(extractField extractors field.Name field.PropertyType ctx))
+                        |> Array.mapi (fun i field ->
+                            // Check if this is a nested route union - pass through without extraction
+                            if isNestedRouteUnion field.PropertyType then
+                                FromExtraction(Ok(fieldValues.[i]))
+                            // Check if this is an OptPre<'T> that should be skipped
+                            elif
+                                tryGetOptPreInfo field.PropertyType
+                                |> Option.exists (fun innerType -> shouldSkipOptPrecondition leafCaseInfo innerType)
+                            then
+                                // Skip this OptPre - provide sentinel value
+                                FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
+                            else
+                                // Not skipped - try precondition or extraction
+                                match findPrecondition preconditions field.PropertyType with
+                                | Some precondition -> FromPrecondition(precondition.Extract ctx)
+                                | None -> FromExtraction(extractField extractors field.Name field.PropertyType ctx))
 
                     // Collect all errors
                     let allErrors =
