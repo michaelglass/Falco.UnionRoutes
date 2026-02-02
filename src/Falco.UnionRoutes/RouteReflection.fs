@@ -6,14 +6,26 @@ open Falco
 open Falco.Routing
 open FSharp.Reflection
 
-/// Reflection utilities for extracting route information from discriminated unions
+/// <summary>Reflection utilities for extracting route information from discriminated unions.</summary>
+/// <remarks>
+/// Provides functions to generate Falco endpoints, create type-safe links,
+/// enumerate all routes, and validate route structure.
+/// </remarks>
 module RouteReflection =
 
     // Precompiled regex for better performance during route enumeration
     let private kebabCaseRegex =
         Regex(@"([a-z])([A-Z])|([A-Z]+)([A-Z][a-z])", RegexOptions.Compiled)
 
-    /// Convert PascalCase to kebab-case (e.g., "DigestView" -> "digest-view", "HTMLParser" -> "html-parser")
+    /// <summary>Converts PascalCase to kebab-case.</summary>
+    /// <param name="s">The PascalCase string to convert.</param>
+    /// <returns>The kebab-case version of the string.</returns>
+    /// <example>
+    /// <code>
+    /// toKebabCase "DigestView"  // returns "digest-view"
+    /// toKebabCase "HTMLParser"  // returns "html-parser"
+    /// </code>
+    /// </example>
     let toKebabCase (s: string) =
         kebabCaseRegex
             .Replace(
@@ -26,7 +38,10 @@ module RouteReflection =
             )
             .ToLowerInvariant()
 
-    /// Convert RouteMethod enum to HttpMethod DU
+    /// <summary>Converts a <see cref="RouteMethod"/> enum to an <see cref="HttpMethod"/> discriminated union.</summary>
+    /// <param name="rm">The RouteMethod enum value.</param>
+    /// <returns>The corresponding HttpMethod DU case.</returns>
+    /// <exception cref="System.Exception">Thrown when an unknown RouteMethod value is provided.</exception>
     let toHttpMethod (rm: RouteMethod) : HttpMethod =
         match rm with
         | RouteMethod.Get -> HttpMethod.Get
@@ -37,7 +52,9 @@ module RouteReflection =
         | RouteMethod.Any -> HttpMethod.Any
         | unknown -> failwith $"Unknown RouteMethod: {int unknown}"
 
-    /// Get RouteAttribute from a union case, if present
+    /// <summary>Gets the <see cref="RouteAttribute"/> from a union case, if present.</summary>
+    /// <param name="case">The union case to inspect.</param>
+    /// <returns><c>Some attribute</c> if the case has a RouteAttribute, <c>None</c> otherwise.</returns>
     let getRouteAttr (case: UnionCaseInfo) : RouteAttribute option =
         case.GetCustomAttributes(typeof<RouteAttribute>)
         |> Array.tryHead
@@ -221,11 +238,17 @@ module RouteReflection =
                 let pathSegments = if segment = "" then [] else [ segment ]
                 (method, pathSegments)
 
-    /// Full route metadata extracted via reflection
-    type RouteInfo = { Method: HttpMethod; Path: string }
+    /// <summary>Full route metadata extracted via reflection.</summary>
+    type RouteInfo =
+        { /// <summary>The HTTP method for this route.</summary>
+          Method: HttpMethod
+          /// <summary>The URL path pattern for this route.</summary>
+          Path: string }
 
-    /// Get full route metadata for a route value using reflection.
-    /// Returns None if the route has no RouteAttribute.
+    /// <summary>Gets full route metadata for a route value using reflection.</summary>
+    /// <typeparam name="T">The route union type.</typeparam>
+    /// <param name="route">The route value to inspect.</param>
+    /// <returns><c>Some info</c> with method and path, or <c>None</c> if the route has no method.</returns>
     let tryRouteInfo (route: 'T) : RouteInfo option =
         let (methodOpt, segments) = extractRouteInfo (box route)
 
@@ -240,8 +263,11 @@ module RouteReflection =
             Some { Method = method; Path = path }
         | None -> None
 
-    /// Get full route metadata for a route value using reflection.
-    /// Throws if the route has no RouteAttribute.
+    /// <summary>Gets full route metadata for a route value using reflection.</summary>
+    /// <typeparam name="T">The route union type.</typeparam>
+    /// <param name="route">The route value to inspect.</param>
+    /// <returns>A <see cref="RouteInfo"/> with method and path.</returns>
+    /// <exception cref="System.Exception">Thrown if the route case has no HTTP method.</exception>
     let routeInfo (route: 'T) : RouteInfo =
         match tryRouteInfo route with
         | Some info -> info
@@ -249,7 +275,10 @@ module RouteReflection =
             let case, _ = FSharpValue.GetUnionFields(route, typeof<'T>)
             failwithf "Route case '%s' is missing [<Route(...)>] attribute" case.Name
 
-    /// Get (HttpMethod, pathPattern) tuple for a route value.
+    /// <summary>Gets HTTP method and path pattern as a tuple for a route value.</summary>
+    /// <typeparam name="T">The route union type.</typeparam>
+    /// <param name="route">The route value to inspect.</param>
+    /// <returns>A tuple of (HttpMethod, path pattern string).</returns>
     let routeTuple (route: 'T) : HttpMethod * string =
         let info = routeInfo route
         (info.Method, info.Path)
@@ -320,8 +349,17 @@ module RouteReflection =
 
             | None -> if segment = "" then [] else [ segment ]
 
-    /// Generate a concrete URL path from a route value by substituting actual field values.
-    /// Example: link (Posts (Detail (Guid.Parse "abc..."))) returns "/posts/abc..."
+    /// <summary>Generates a concrete URL path from a route value by substituting actual field values.</summary>
+    /// <typeparam name="T">The route union type.</typeparam>
+    /// <param name="route">The route value with actual parameter values.</param>
+    /// <returns>A URL path with parameters substituted.</returns>
+    /// <example>
+    /// <code>
+    /// let postId = PostId (Guid.Parse "abc-123")
+    /// let url = RouteReflection.link (Posts (Detail postId))
+    /// // returns "/posts/abc-123"
+    /// </code>
+    /// </example>
     let link (route: 'T) : string =
         let segments = extractLink (box route)
 
@@ -382,8 +420,21 @@ module RouteReflection =
                     let args = fields |> Array.map (fun f -> getDefaultValue f.PropertyType)
                     [ FSharpValue.MakeUnion(case, args) ])
 
-    /// Enumerate all route cases for a route union type.
-    /// Parameterized routes are created with default values (Guid.Empty, "", 0, etc.)
+    /// <summary>Enumerates all route cases for a route union type.</summary>
+    /// <typeparam name="TRoute">The route union type to enumerate.</typeparam>
+    /// <returns>A list of all possible route values, with parameterized routes using default values.</returns>
+    /// <remarks>
+    /// Parameterized routes are created with default values: <c>Guid.Empty</c>, <c>""</c>, <c>0</c>, etc.
+    /// Useful for generating endpoint lists or documentation.
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// let allRoutes = RouteReflection.allRoutes&lt;Route&gt;()
+    /// for route in allRoutes do
+    ///     let info = RouteReflection.routeInfo route
+    ///     printfn "%A %s" info.Method info.Path
+    /// </code>
+    /// </example>
     let allRoutes<'TRoute> () : 'TRoute list =
         enumerateUnionValues typeof<'TRoute> |> List.map (fun o -> o :?> 'TRoute)
 
@@ -521,8 +572,27 @@ module RouteReflection =
 
                 caseErrors @ nestedErrors)
 
-    /// Validates route structure (paths, field types, etc.)
-    /// Returns Ok () if valid, Error with list of issues if invalid.
+    /// <summary>Validates route structure including paths, field types, and constraints.</summary>
+    /// <typeparam name="Route">The route union type to validate.</typeparam>
+    /// <returns><c>Ok ()</c> if valid, <c>Error</c> with list of issues if invalid.</returns>
+    /// <remarks>
+    /// <para>Validates the following:</para>
+    /// <list type="bullet">
+    ///   <item><description>Invalid characters in paths</description></item>
+    ///   <item><description>Unbalanced braces in path patterns</description></item>
+    ///   <item><description>Duplicate path parameters</description></item>
+    ///   <item><description>Path parameters matching field names</description></item>
+    ///   <item><description>Multiple nested route unions (max 1 supported)</description></item>
+    /// </list>
+    /// <para>Called automatically by <see cref="endpoints"/>.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// match RouteReflection.validateStructure&lt;Route&gt;() with
+    /// | Ok () -> printfn "Routes are valid"
+    /// | Error errors -> errors |> List.iter (printfn "Error: %s")
+    /// </code>
+    /// </example>
     let validateStructure<'Route> () : Result<unit, string list> =
         let errors = validateUnionType typeof<'Route>
 
@@ -532,7 +602,9 @@ module RouteReflection =
     // Falco integration
     // =========================================================================
 
-    /// Convert HttpMethod to Falco's route function (get, post, put, delete, patch, any)
+    /// <summary>Converts an <see cref="HttpMethod"/> to Falco's route function.</summary>
+    /// <param name="method">The HTTP method to convert.</param>
+    /// <returns>The corresponding Falco route function (get, post, put, delete, patch, or any).</returns>
     let toFalcoMethod (method: HttpMethod) =
         match method with
         | HttpMethod.Get -> get
@@ -542,9 +614,26 @@ module RouteReflection =
         | HttpMethod.Patch -> patch
         | HttpMethod.Any -> any
 
-    /// Generate Falco endpoints from a route handler function.
-    /// Enumerates all routes of the given type and maps each to an HttpEndpoint.
-    /// Automatically validates route structure at startup - throws if invalid.
+    /// <summary>Generates Falco endpoints from a route handler function.</summary>
+    /// <typeparam name="TRoute">The route union type.</typeparam>
+    /// <param name="routeHandler">A function that takes a route value and returns an HTTP handler.</param>
+    /// <returns>A list of Falco <c>HttpEndpoint</c> values ready for use with <c>app.UseFalco</c>.</returns>
+    /// <exception cref="System.Exception">Thrown if route validation fails (invalid paths, missing fields, etc.).</exception>
+    /// <remarks>
+    /// <para>Enumerates all routes of the given type and maps each to an HttpEndpoint.</para>
+    /// <para>Automatically validates route structure at startup via <see cref="validateStructure"/>.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// let routeHandler route =
+    ///     match route with
+    ///     | Home -> Response.ofPlainText "home"
+    ///     | Posts p -> postHandler p
+    ///
+    /// let endpoints = RouteReflection.endpoints routeHandler
+    /// app.UseFalco(endpoints) |> ignore
+    /// </code>
+    /// </example>
     let endpoints (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
         // Validate route structure at startup
         match validateStructure<'TRoute> () with

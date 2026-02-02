@@ -26,6 +26,8 @@ let handlePost route : HttpHandler =
 dotnet add package Falco.UnionRoutes
 ```
 
+**[API Documentation](https://michaelglass.github.io/Falco.UnionRoutes/)**
+
 ## How It Works
 
 Routes are discriminated unions. Field names become URL parameters:
