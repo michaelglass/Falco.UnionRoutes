@@ -457,6 +457,93 @@ module RouteHydration =
         | FromPrecondition of Result<obj, 'Error>
         | FromExtraction of Result<obj, string>
 
+    // =========================================================================
+    // Precondition validation
+    // =========================================================================
+
+    /// Recursively collects all Pre<T> and OptPre<T> types from a union type
+    let rec private collectPreconditionTypes (unionType: Type) : Type list =
+        if not (FSharpType.IsUnion(unionType)) then
+            []
+        else
+            FSharpType.GetUnionCases(unionType)
+            |> Array.toList
+            |> List.collect (fun case ->
+                let fields = case.GetFields()
+
+                // Collect Pre<T> and OptPre<T> from this case's fields
+                let preconditionTypes =
+                    fields
+                    |> Array.choose (fun f ->
+                        if tryGetPreInfo f.PropertyType |> Option.isSome then
+                            Some f.PropertyType
+                        elif tryGetOptPreInfo f.PropertyType |> Option.isSome then
+                            Some f.PropertyType
+                        else
+                            None)
+                    |> Array.toList
+
+                // Recursively collect from nested route unions
+                let nestedTypes =
+                    fields
+                    |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+                    |> Array.toList
+                    |> List.collect (fun f -> collectPreconditionTypes f.PropertyType)
+
+                preconditionTypes @ nestedTypes)
+            |> List.distinct
+
+    /// Formats a type name in a readable way (e.g., "Pre<UserId>" instead of "Pre`1")
+    let private formatTypeName (t: Type) : string =
+        if t.IsGenericType then
+            let baseName = t.Name.Substring(0, t.Name.IndexOf('`'))
+
+            let args =
+                t.GetGenericArguments() |> Array.map (fun a -> a.Name) |> String.concat ", "
+
+            $"{baseName}<{args}>"
+        else
+            t.Name
+
+    /// Validates that all Pre<T> and OptPre<T> fields have registered preconditions.
+    /// Returns Ok () if valid, Error with list of missing precondition types if invalid.
+    let validatePreconditions<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
+        let requiredTypes = collectPreconditionTypes typeof<'Route>
+        let registeredTypes = preconditions |> List.map (fun p -> p.MatchType)
+
+        let missingTypes =
+            requiredTypes
+            |> List.filter (fun t -> not (registeredTypes |> List.exists (fun r -> r = t)))
+            |> List.map formatTypeName
+
+        if missingTypes.IsEmpty then
+            Ok()
+        else
+            let missingStr = missingTypes |> String.concat ", "
+            Error [ $"Missing preconditions for: {missingStr}" ]
+
+    /// Full validation: route structure + precondition coverage.
+    /// Designed for use in tests.
+    /// Returns Ok () if valid, Error with list of all issues if invalid.
+    let validate<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
+        let structureErrors =
+            match RouteReflection.validateStructure<'Route> () with
+            | Ok() -> []
+            | Error errors -> errors
+
+        let preconditionErrors =
+            match validatePreconditions<'Route, 'Error> preconditions with
+            | Ok() -> []
+            | Error errors -> errors
+
+        let allErrors = structureErrors @ preconditionErrors
+
+        if allErrors.IsEmpty then Ok() else Error allErrors
+
+    // =========================================================================
+    // Hydration
+    // =========================================================================
+
     /// Creates a hydration function for a route type.
     /// All errors are accumulated and combined using combineErrors.
     ///

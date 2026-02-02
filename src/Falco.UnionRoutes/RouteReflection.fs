@@ -111,7 +111,8 @@ module RouteReflection =
 
     /// Infer path segment from case fields (e.g., "of id: Guid" -> "{id}")
     /// Excludes: nested route unions, Pre<'T> (preconditions), OptPre<'T> (skippable preconditions), Query<'T> (query params)
-    /// When there are BOTH params AND nested union, includes case name as prefix: "users/{userId}"
+    /// Always includes case name prefix for cases with path fields: "emails/{id}"
+    /// Exception: "Detail" convention uses just the param path: "{id}"
     let private inferPathFromFields (case: UnionCaseInfo) : string option =
         let fields = case.GetFields()
 
@@ -123,21 +124,17 @@ module RouteReflection =
             // Filter out non-route fields (nested unions, preconditions, query params)
             let pathFields = fields |> Array.filter (fun f -> not (isNonRouteField f))
 
-            let hasNestedUnion =
-                fields |> Array.exists (fun f -> isNestedRouteUnion f.PropertyType)
-
             if pathFields.Length = 0 then
                 None
             else
                 let paramPath =
                     pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
 
-                // Include case name when there's both params AND nested union
-                // e.g., Users of userId: UserId * UserRoute -> "users/{userId}"
-                if hasNestedUnion then
-                    Some(toKebabCase case.Name + "/" + paramPath)
-                else
-                    Some paramPath
+                // "Detail" convention: just the param path (e.g., "{id}" for /users/{id})
+                // All other cases: include case name prefix (e.g., "emails/{id}" for /users/emails/{id})
+                match case.Name with
+                | "Detail" -> Some paramPath
+                | _ -> Some(toKebabCase case.Name + "/" + paramPath)
 
     /// Check if a case has any route path fields (i.e., typed arguments like "of id: Guid")
     /// Excludes: nested route unions, Pre<'T> (preconditions), Query<'T> (query params)
@@ -386,6 +383,147 @@ module RouteReflection =
         enumerateUnionValues typeof<'TRoute> |> List.map (fun o -> o :?> 'TRoute)
 
     // =========================================================================
+    // Route validation
+    // =========================================================================
+
+    /// Valid characters for route path segments (excluding parameter placeholders)
+    let private validPathChars =
+        Set.ofList ([ 'a' .. 'z' ] @ [ 'A' .. 'Z' ] @ [ '0' .. '9' ] @ [ '-'; '_'; '/'; '.' ])
+
+    /// Validates a path segment for invalid characters
+    let private validatePathChars (path: string) : string list =
+        let invalidChars =
+            path.Replace("{", "").Replace("}", "")
+            |> Seq.filter (fun c -> not (Set.contains c validPathChars))
+            |> Seq.distinct
+            |> Seq.toList
+
+        if invalidChars.IsEmpty then
+            []
+        else
+            let charsStr = invalidChars |> List.map string |> String.concat ", "
+            [ $"Invalid characters in path '{path}': {charsStr}" ]
+
+    /// Validates that path parameter braces are balanced
+    let private validateBalancedBraces (path: string) : string list =
+        let rec check chars depth =
+            match chars with
+            | [] -> depth = 0
+            | '{' :: rest -> check rest (depth + 1)
+            | '}' :: rest when depth > 0 -> check rest (depth - 1)
+            | '}' :: _ -> false // Closing brace without opening
+            | _ :: rest -> check rest depth
+
+        if check (Seq.toList path) 0 then
+            []
+        else
+            [ $"Unbalanced braces in path '{path}'" ]
+
+    /// Extracts parameter names from a path pattern (e.g., "{id}/{slug}" -> ["id"; "slug"])
+    let private extractPathParams (path: string) : string list =
+        System.Text.RegularExpressions.Regex.Matches(path, @"\{([^}]+)\}")
+        |> Seq.cast<System.Text.RegularExpressions.Match>
+        |> Seq.map (fun m -> m.Groups.[1].Value)
+        |> Seq.toList
+
+    /// Validates that path params don't have duplicates
+    let private validateNoDuplicateParams (path: string) : string list =
+        let params' = extractPathParams path
+
+        let duplicates =
+            params'
+            |> List.countBy id
+            |> List.filter (fun (_, count) -> count > 1)
+            |> List.map fst
+
+        if duplicates.IsEmpty then
+            []
+        else
+            let dupsStr = duplicates |> String.concat ", "
+            [ $"Duplicate path parameters in '{path}': {dupsStr}" ]
+
+    /// Gets the route path field names for a case (excludes nested unions, preconditions, query params)
+    let private getRoutePathFieldNames (case: UnionCaseInfo) : string list =
+        case.GetFields()
+        |> Array.filter (fun f -> not (isNonRouteField f))
+        |> Array.map (fun f -> f.Name)
+        |> Array.toList
+
+    /// Validates that path params match field names for a case
+    let private validatePathParamsMatchFields (case: UnionCaseInfo) (path: string) : string list =
+        let pathParams = extractPathParams path |> Set.ofList
+        let fieldNames = getRoutePathFieldNames case |> Set.ofList
+
+        let missingInFields = Set.difference pathParams fieldNames
+        let missingInPath = Set.difference fieldNames pathParams
+
+        let errors = ResizeArray()
+
+        if not (Set.isEmpty missingInFields) then
+            let missingStr = missingInFields |> String.concat ", "
+            errors.Add($"Path params not found in fields for '{case.Name}': {missingStr}")
+
+        if not (Set.isEmpty missingInPath) then
+            let missingStr = missingInPath |> String.concat ", "
+            errors.Add($"Fields not in path for '{case.Name}': {missingStr}")
+
+        errors |> Seq.toList
+
+    /// Counts nested route unions in a case's fields
+    let private countNestedRouteUnions (case: UnionCaseInfo) : int =
+        case.GetFields()
+        |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+        |> Array.length
+
+    /// Validates a single union case
+    let private validateCase (case: UnionCaseInfo) : string list =
+        let path = getPathSegment case
+        let errors = ResizeArray()
+
+        // Check for multiple nested route unions
+        let nestedCount = countNestedRouteUnions case
+
+        if nestedCount > 1 then
+            errors.Add($"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)")
+
+        // Validate path syntax
+        errors.AddRange(validatePathChars path)
+        errors.AddRange(validateBalancedBraces path)
+        errors.AddRange(validateNoDuplicateParams path)
+
+        // Validate path params match fields (only if path has params)
+        if path.Contains("{") then
+            errors.AddRange(validatePathParamsMatchFields case path)
+
+        errors |> Seq.toList
+
+    /// Recursively validates all union cases in a route type
+    let rec private validateUnionType (unionType: Type) : string list =
+        if not (FSharpType.IsUnion(unionType)) then
+            []
+        else
+            FSharpType.GetUnionCases(unionType)
+            |> Array.toList
+            |> List.collect (fun case ->
+                let caseErrors = validateCase case
+
+                // Recursively validate nested route unions
+                let nestedErrors =
+                    case.GetFields()
+                    |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+                    |> Array.toList
+                    |> List.collect (fun f -> validateUnionType f.PropertyType)
+
+                caseErrors @ nestedErrors)
+
+    /// Validates route structure (paths, field types, etc.)
+    /// Returns Ok () if valid, Error with list of issues if invalid.
+    let validateStructure<'Route> () : Result<unit, string list> =
+        let errors = validateUnionType typeof<'Route>
+
+        if errors.IsEmpty then Ok() else Error errors
+
+    // =========================================================================
     // Falco integration
     // =========================================================================
 
@@ -401,7 +539,15 @@ module RouteReflection =
 
     /// Generate Falco endpoints from a route handler function.
     /// Enumerates all routes of the given type and maps each to an HttpEndpoint.
+    /// Automatically validates route structure at startup - throws if invalid.
     let endpoints (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
+        // Validate route structure at startup
+        match validateStructure<'TRoute> () with
+        | Error errors ->
+            let errorMsg = errors |> String.concat "\n  - "
+            failwith $"Route validation failed:\n  - {errorMsg}"
+        | Ok() -> ()
+
         allRoutes<'TRoute> ()
         |> List.map (fun route ->
             let info = routeInfo route
