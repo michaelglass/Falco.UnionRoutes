@@ -11,16 +11,19 @@ open Microsoft.AspNetCore.Http
 // =============================================================================
 
 type UserId = UserId of Guid
+type AdminId = AdminId of Guid
 
 type TestError =
     | NotAuthenticated
+    | Forbidden
     | BadRequest of string
 
+// Routes using Pre<'T> for preconditions
 type SimpleRoute =
     | List
     | Detail of id: Guid
-    | WithAuth of UserId
-    | WithBoth of UserId * id: Guid
+    | WithAuth of Pre<UserId>
+    | WithBoth of Pre<UserId> * id: Guid
 
 type StringRoute = BySlug of slug: string
 
@@ -35,16 +38,16 @@ type PostId = PostId of Guid
 
 type WrapperRoute =
     | ByPostId of id: PostId
-    | WithAuthAndPostId of UserId * id: PostId
+    | WithAuthAndPostId of Pre<UserId> * id: PostId
 
 // Custom type for testing custom extractors
 type Slug = Slug of string
 
 type CustomTypeRoute =
     | BySlugCustom of slug: Slug
-    | WithAuthAndSlug of UserId * slug: Slug
+    | WithAuthAndSlug of Pre<UserId> * slug: Slug
 
-// Route for testing createNoAuth
+// Route without preconditions
 type NoAuthRoute =
     | SimpleNoAuth of id: Guid
     | WithWrapper of id: PostId
@@ -60,6 +63,12 @@ type QueryRoute =
 
 // Route for testing error accumulation
 type MultiFieldRoute = TwoRequired of a: Guid * b: int
+
+// Route for testing multiple preconditions
+type MultiPreRoute =
+    | NeedsUser of Pre<UserId>
+    | NeedsAdmin of Pre<AdminId>
+    | NeedsBoth of Pre<UserId> * Pre<AdminId>
 
 // =============================================================================
 // Mock helpers
@@ -89,7 +98,7 @@ let createMockContextWithRouteAndQuery (routeValues: (string * string) list) (qu
 
     context :> HttpContext
 
-let mockAuth () : Pipeline<UserId, TestError> =
+let mockUserAuth: Pipeline<UserId, TestError> =
     fun ctx ->
         match ctx.Request.Headers.TryGetValue("X-User-Id") with
         | true, values ->
@@ -97,6 +106,15 @@ let mockAuth () : Pipeline<UserId, TestError> =
             | true, guid -> Ok(UserId guid)
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
+
+let mockAdminAuth: Pipeline<AdminId, TestError> =
+    fun ctx ->
+        match ctx.Request.Headers.TryGetValue("X-Admin-Id") with
+        | true, values ->
+            match Guid.TryParse(values.ToString()) with
+            | true, guid -> Ok(AdminId guid)
+            | false, _ -> Error Forbidden
+        | false, _ -> Error Forbidden
 
 /// Convert extraction error string to TestError
 let makeError (msg: string) = BadRequest msg
@@ -107,23 +125,27 @@ let combineErrors (errors: TestError list) =
     | [ single ] -> single
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
+// Precondition factories (create fresh each time to avoid module initialization issues)
+let userPrecondition () = RouteHydration.forPre<UserId, TestError> mockUserAuth
+let adminPrecondition () = RouteHydration.forPre<AdminId, TestError> mockAdminAuth
+
 let hydrate () =
-    RouteHydration.create<SimpleRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<SimpleRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
 
 let hydrateString () =
-    RouteHydration.create<StringRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<StringRoute, TestError> [] [] makeError combineErrors
 
 let hydrateInt () =
-    RouteHydration.create<IntRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<IntRoute, TestError> [] [] makeError combineErrors
 
 let hydrateInt64 () =
-    RouteHydration.create<Int64Route, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<Int64Route, TestError> [] [] makeError combineErrors
 
 let hydrateBool () =
-    RouteHydration.create<BoolRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<BoolRoute, TestError> [] [] makeError combineErrors
 
 let hydrateWrapper () =
-    RouteHydration.create<WrapperRoute, UserId, TestError> (mockAuth ()) makeError combineErrors
+    RouteHydration.create<WrapperRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
 
 // Custom extractor for Slug type
 let slugExtractor: TypeExtractor =
@@ -140,23 +162,30 @@ let slugExtractor: TypeExtractor =
             None
 
 let hydrateCustom () =
-    RouteHydration.createWith<CustomTypeRoute, UserId, TestError>
+    RouteHydration.create<CustomTypeRoute, TestError>
+        [ userPrecondition () ]
         [ slugExtractor ]
-        (mockAuth ())
         makeError
         combineErrors
 
 let hydrateNoAuth () =
-    RouteHydration.createNoAuth<NoAuthRoute, TestError> makeError combineErrors
+    RouteHydration.create<NoAuthRoute, TestError> [] [] makeError combineErrors
 
 let hydrateNoAuthWithCustom () =
-    RouteHydration.createNoAuthWith<CustomTypeRoute, TestError> [ slugExtractor ] makeError combineErrors
+    RouteHydration.create<CustomTypeRoute, TestError> [] [ slugExtractor ] makeError combineErrors
 
 let hydrateQuery () =
-    RouteHydration.createNoAuth<QueryRoute, TestError> makeError combineErrors
+    RouteHydration.create<QueryRoute, TestError> [] [] makeError combineErrors
 
 let hydrateMultiField () =
-    RouteHydration.createNoAuth<MultiFieldRoute, TestError> makeError combineErrors
+    RouteHydration.create<MultiFieldRoute, TestError> [] [] makeError combineErrors
+
+let hydrateMultiPre () =
+    RouteHydration.create<MultiPreRoute, TestError>
+        [ userPrecondition (); adminPrecondition () ]
+        []
+        makeError
+        combineErrors
 
 // =============================================================================
 // Unit route tests (no fields)
@@ -193,54 +222,131 @@ let ``returns error for missing Guid param`` () =
     let result = pipeline ctx
     test <@ Result.isError result @>
 
+[<Fact>]
+let ``error message contains field name for missing param`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrate () (SimpleRoute.Detail Guid.Empty)
+    match pipeline ctx with
+    | Error(BadRequest msg) -> Assert.Contains("id", msg)
+    | Error NotAuthenticated -> Assert.Fail("Unexpected NotAuthenticated")
+    | Error Forbidden -> Assert.Fail("Unexpected Forbidden")
+    | Ok _ -> Assert.Fail("Expected error")
+
 // =============================================================================
-// Auth field tests
+// Precondition (Pre<'T>) field tests
 // =============================================================================
 
 [<Fact>]
-let ``hydrates auth field from pipeline`` () =
+let ``hydrates Pre field from precondition`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithAuth(UserId Guid.Empty))
-    test <@ pipeline ctx = Ok(SimpleRoute.WithAuth(UserId userId)) @>
+    let pipeline = hydrate () (SimpleRoute.WithAuth(Pre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Ok(SimpleRoute.WithAuth(Pre(UserId userId))), result)
 
 [<Fact>]
-let ``returns auth error when not authenticated`` () =
+let ``returns precondition error when not authenticated`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrate () (SimpleRoute.WithAuth(UserId Guid.Empty))
-    // Auth errors preserve their original type
-    test <@ pipeline ctx = Error NotAuthenticated @>
+    let pipeline = hydrate () (SimpleRoute.WithAuth(Pre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    // Precondition errors preserve their original type
+    Assert.Equal(Error NotAuthenticated, result)
 
 // =============================================================================
 // Combined field tests
 // =============================================================================
 
 [<Fact>]
-let ``hydrates both auth and Guid fields`` () =
+let ``hydrates both Pre and Guid fields`` () =
     let userId = Guid.NewGuid()
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithBoth(UserId Guid.Empty, Guid.Empty))
-    test <@ pipeline ctx = Ok(SimpleRoute.WithBoth(UserId userId, postId)) @>
+    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
+    let result = pipeline ctx
+    Assert.Equal(Ok(SimpleRoute.WithBoth(Pre(UserId userId), postId)), result)
 
 [<Fact>]
-let ``returns auth error even with valid Guid when not authenticated`` () =
+let ``returns precondition error even with valid Guid when not authenticated`` () =
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
-    let pipeline = hydrate () (SimpleRoute.WithBoth(UserId Guid.Empty, Guid.Empty))
-    // Auth errors preserve their original type
-    test <@ pipeline ctx = Error NotAuthenticated @>
+    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
+    let result = pipeline ctx
+    // Precondition errors preserve their original type
+    Assert.Equal(Error NotAuthenticated, result)
 
 [<Fact>]
-let ``returns Guid error with valid auth but invalid Guid`` () =
+let ``returns Guid error with valid precondition but invalid Guid`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", "invalid") ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithBoth(UserId Guid.Empty, Guid.Empty))
+    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
     let result = pipeline ctx
-    test <@ Result.isError result @>
+    Assert.True(Result.isError result)
+
+// =============================================================================
+// Multiple preconditions tests
+// =============================================================================
+
+[<Fact>]
+let ``hydrates Pre<UserId> with user precondition`` () =
+    let userId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-User-Id", userId.ToString())
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsUser(Pre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Ok(MultiPreRoute.NeedsUser(Pre(UserId userId))), result)
+
+[<Fact>]
+let ``hydrates Pre<AdminId> with admin precondition`` () =
+    let adminId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Ok(MultiPreRoute.NeedsAdmin(Pre(AdminId adminId))), result)
+
+[<Fact>]
+let ``hydrates both Pre<UserId> and Pre<AdminId>`` () =
+    let userId = Guid.NewGuid()
+    let adminId = Guid.NewGuid()
+    let ctx = createMockContextWithRoute []
+    ctx.Request.Headers.Append("X-User-Id", userId.ToString())
+    ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Ok(MultiPreRoute.NeedsBoth(Pre(UserId userId), Pre(AdminId adminId))), result)
+
+[<Fact>]
+let ``returns correct error for missing user precondition`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsUser(Pre(UserId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Error NotAuthenticated, result)
+
+[<Fact>]
+let ``returns correct error for missing admin precondition`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+    let result = pipeline ctx
+    Assert.Equal(Error Forbidden, result)
+
+[<Fact>]
+let ``accumulates errors when both preconditions fail`` () =
+    let ctx = createMockContextWithRoute []
+    // Neither user nor admin headers set
+    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+    let result = pipeline ctx
+    // combineErrors should combine both errors
+    match result with
+    | Error(BadRequest msg) ->
+        // Both NotAuthenticated and Forbidden should be in the combined error
+        Assert.Contains("NotAuthenticated", msg)
+        Assert.Contains("Forbidden", msg)
+    | Error NotAuthenticated -> Assert.Fail("Expected combined error, got single NotAuthenticated")
+    | Error Forbidden -> Assert.Fail("Expected combined error, got single Forbidden")
+    | Ok _ -> Assert.Fail("Expected error, got Ok")
 
 // =============================================================================
 // String field tests
@@ -289,13 +395,36 @@ let ``returns error for non-numeric int param`` () =
     let result = pipeline ctx
     test <@ Result.isError result @>
 
+[<Fact>]
+let ``handles zero int`` () =
+    let ctx = createMockContextWithRoute [ ("page", "0") ]
+    let pipeline = hydrateInt () (IntRoute.ByPage 1)
+    test <@ pipeline ctx = Ok(IntRoute.ByPage 0) @>
+
+[<Fact>]
+let ``handles Int32.MaxValue`` () =
+    let ctx = createMockContextWithRoute [ ("page", "2147483647") ]
+    let pipeline = hydrateInt () (IntRoute.ByPage 0)
+    test <@ pipeline ctx = Ok(IntRoute.ByPage 2147483647) @>
+
+[<Fact>]
+let ``handles Int32.MinValue`` () =
+    let ctx = createMockContextWithRoute [ ("page", "-2147483648") ]
+    let pipeline = hydrateInt () (IntRoute.ByPage 0)
+    test <@ pipeline ctx = Ok(IntRoute.ByPage -2147483648) @>
+
+[<Fact>]
+let ``returns error for int overflow`` () =
+    let ctx = createMockContextWithRoute [ ("page", "2147483648") ] // Int32.MaxValue + 1
+    let pipeline = hydrateInt () (IntRoute.ByPage 0)
+    test <@ Result.isError (pipeline ctx) @>
+
 // =============================================================================
 // Int64 field tests
 // =============================================================================
 
 [<Fact>]
 let ``hydrates int64 field from route params`` () =
-    // Use a number that fits in int32 range to avoid ASP.NET Core's scientific notation issue
     let ctx = createMockContextWithRoute [ ("id", "1234567890") ]
     let pipeline = hydrateInt64 () (Int64Route.ByBigId 0L)
     test <@ pipeline ctx = Ok(Int64Route.ByBigId 1234567890L) @>
@@ -377,26 +506,28 @@ let ``hydrates wrapper type field from route params`` () =
     let id = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", id.ToString()) ]
     let pipeline = hydrateWrapper () (WrapperRoute.ByPostId(PostId Guid.Empty))
-    test <@ pipeline ctx = Ok(WrapperRoute.ByPostId(PostId id)) @>
+    let result = pipeline ctx
+    Assert.Equal(Ok(WrapperRoute.ByPostId(PostId id)), result)
 
 [<Fact>]
 let ``returns error for invalid Guid in wrapper type`` () =
     let ctx = createMockContextWithRoute [ ("id", "not-a-guid") ]
     let pipeline = hydrateWrapper () (WrapperRoute.ByPostId(PostId Guid.Empty))
     let result = pipeline ctx
-    test <@ Result.isError result @>
+    Assert.True(Result.isError result)
 
 [<Fact>]
-let ``hydrates both auth and wrapper type fields`` () =
+let ``hydrates both Pre and wrapper type fields`` () =
     let userId = Guid.NewGuid()
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
     let pipeline =
-        hydrateWrapper () (WrapperRoute.WithAuthAndPostId(UserId Guid.Empty, PostId Guid.Empty))
+        hydrateWrapper () (WrapperRoute.WithAuthAndPostId(Pre(UserId Guid.Empty), PostId Guid.Empty))
 
-    test <@ pipeline ctx = Ok(WrapperRoute.WithAuthAndPostId(UserId userId, PostId postId)) @>
+    let result = pipeline ctx
+    Assert.Equal(Ok(WrapperRoute.WithAuthAndPostId(Pre(UserId userId), PostId postId)), result)
 
 // =============================================================================
 // Custom extractor tests
@@ -405,50 +536,45 @@ let ``hydrates both auth and wrapper type fields`` () =
 [<Fact>]
 let ``custom extractor handles custom type`` () =
     let ctx = createMockContextWithRoute [ ("slug", "hello-world") ]
-    let pipeline = hydrateCustom () (CustomTypeRoute.BySlugCustom(Slug ""))
+    let pipeline = hydrateNoAuthWithCustom () (CustomTypeRoute.BySlugCustom(Slug ""))
     test <@ pipeline ctx = Ok(CustomTypeRoute.BySlugCustom(Slug "hello-world")) @>
 
 [<Fact>]
 let ``custom extractor returns error for missing value`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrateCustom () (CustomTypeRoute.BySlugCustom(Slug ""))
+    let pipeline = hydrateNoAuthWithCustom () (CustomTypeRoute.BySlugCustom(Slug ""))
     let result = pipeline ctx
     test <@ Result.isError result @>
 
 [<Fact>]
-let ``custom extractor works with auth`` () =
+let ``custom extractor works with Pre`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("slug", "my-post") ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
     let pipeline =
-        hydrateCustom () (CustomTypeRoute.WithAuthAndSlug(UserId Guid.Empty, Slug ""))
+        hydrateCustom () (CustomTypeRoute.WithAuthAndSlug(Pre(UserId Guid.Empty), Slug ""))
 
-    test <@ pipeline ctx = Ok(CustomTypeRoute.WithAuthAndSlug(UserId userId, Slug "my-post")) @>
+    let result = pipeline ctx
+    Assert.Equal(Ok(CustomTypeRoute.WithAuthAndSlug(Pre(UserId userId), Slug "my-post")), result)
 
 // =============================================================================
-// createNoAuth tests
+// No precondition tests
 // =============================================================================
 
 [<Fact>]
-let ``createNoAuth hydrates Guid field`` () =
+let ``hydrates Guid field without preconditions`` () =
     let id = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", id.ToString()) ]
     let pipeline = hydrateNoAuth () (NoAuthRoute.SimpleNoAuth Guid.Empty)
     test <@ pipeline ctx = Ok(NoAuthRoute.SimpleNoAuth id) @>
 
 [<Fact>]
-let ``createNoAuth hydrates wrapper type`` () =
+let ``hydrates wrapper type without preconditions`` () =
     let id = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", id.ToString()) ]
     let pipeline = hydrateNoAuth () (NoAuthRoute.WithWrapper(PostId Guid.Empty))
     test <@ pipeline ctx = Ok(NoAuthRoute.WithWrapper(PostId id)) @>
-
-[<Fact>]
-let ``createNoAuthWith uses custom extractors`` () =
-    let ctx = createMockContextWithRoute [ ("slug", "custom-slug") ]
-    let pipeline = hydrateNoAuthWithCustom () (CustomTypeRoute.BySlugCustom(Slug ""))
-    test <@ pipeline ctx = Ok(CustomTypeRoute.BySlugCustom(Slug "custom-slug")) @>
 
 // =============================================================================
 // Query parameter tests
@@ -530,7 +656,7 @@ let ``mixed route param works without optional query`` () =
     test <@ pipeline ctx = Ok(QueryRoute.MixedWithOptional(id, None)) @>
 
 // =============================================================================
-// Error accumulation tests (now the default behavior)
+// Error accumulation tests
 // =============================================================================
 
 [<Fact>]
@@ -541,7 +667,9 @@ let ``hydration collects all errors`` () =
 
     match result with
     | Error(BadRequest msg) -> test <@ msg.Contains("a") && msg.Contains("b") @>
-    | _ -> test <@ false @>
+    | Error NotAuthenticated -> Assert.Fail("Unexpected NotAuthenticated error")
+    | Error Forbidden -> Assert.Fail("Unexpected Forbidden error")
+    | Ok route -> Assert.Fail($"Expected error but got: {route}")
 
 [<Fact>]
 let ``hydration succeeds when all fields valid`` () =

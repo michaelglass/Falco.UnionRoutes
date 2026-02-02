@@ -51,6 +51,23 @@ let ``toKebabCase handles consecutive capitals correctly`` () =
     test <@ RouteReflection.toKebabCase "URLHandler" = "url-handler" @>
     test <@ RouteReflection.toKebabCase "GetAPIData" = "get-api-data" @>
 
+[<Fact>]
+let ``toKebabCase handles single letter words`` () =
+    test <@ RouteReflection.toKebabCase "A" = "a" @>
+    test <@ RouteReflection.toKebabCase "ATest" = "a-test" @>
+
+[<Fact>]
+let ``toKebabCase handles trailing acronyms`` () =
+    test <@ RouteReflection.toKebabCase "GetAPI" = "get-api" @>
+    test <@ RouteReflection.toKebabCase "UserID" = "user-id" @>
+
+[<Fact>]
+let ``toKebabCase handles strings with numbers`` () =
+    // Numbers don't trigger splits on their own
+    test <@ RouteReflection.toKebabCase "HTML5Parser" = "html5parser" @>
+    test <@ RouteReflection.toKebabCase "V2Api" = "v2api" @>
+    test <@ RouteReflection.toKebabCase "Get2FACode" = "get2fa-code" @>
+
 // =============================================================================
 // Simple route tests
 // =============================================================================
@@ -166,11 +183,17 @@ let ``allRoutes uses default values for parameters`` () =
         |> List.find (fun r ->
             match r with
             | PostRoute.Detail _ -> true
-            | _ -> false)
+            | PostRoute.List
+            | PostRoute.Create
+            | PostRoute.Update _
+            | PostRoute.Delete _ -> false)
 
     match detailRoute with
     | PostRoute.Detail id -> test <@ id = Guid.Empty @>
-    | _ -> failwith "Expected Detail route"
+    | PostRoute.List -> failwith "Expected Detail route, got List"
+    | PostRoute.Create -> failwith "Expected Detail route, got Create"
+    | PostRoute.Update id -> failwith $"Expected Detail route, got Update {id}"
+    | PostRoute.Delete id -> failwith $"Expected Detail route, got Delete {id}"
 
 [<Fact>]
 let ``All enumerated routes have valid RouteAttribute`` () =
