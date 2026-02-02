@@ -63,6 +63,6 @@ run = "dotnet fsdocs watch"
 depends = ["build"]
 
 [tasks.release]
-description = "Create and push a release tag (args: patch|minor|major)"
-run = "dotnet fsi scripts/release.fsx ${1:-patch}"
+description = "Create and push a release tag (e.g., `mise run release alpha --publish`)"
+run = "dotnet fsi scripts/release.fsx -- $@"
 depends = ["ci"]
