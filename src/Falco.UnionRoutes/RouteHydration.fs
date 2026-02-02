@@ -101,10 +101,12 @@ type OptionalPreCondition<'T> = OptPre<'T>
 /// Create instances using <see cref="RouteHydration.forPre"/> or <see cref="RouteHydration.forOptPre"/>.
 /// </remarks>
 type Precondition<'Error> =
-    { /// <summary>The type this precondition matches (e.g., <c>typeof&lt;Pre&lt;UserId&gt;&gt;</c>).</summary>
-      MatchType: Type
-      /// <summary>The extraction function that runs the precondition.</summary>
-      Extract: HttpContext -> Result<obj, 'Error> }
+    {
+        /// <summary>The type this precondition matches (e.g., <c>typeof&lt;Pre&lt;UserId&gt;&gt;</c>).</summary>
+        MatchType: Type
+        /// <summary>The extraction function that runs the precondition.</summary>
+        Extract: HttpContext -> Result<obj, 'Error>
+    }
 
 /// <summary>Automatic route hydration based on route type structure.</summary>
 /// <remarks>

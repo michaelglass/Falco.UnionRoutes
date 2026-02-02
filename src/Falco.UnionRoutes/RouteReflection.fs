@@ -240,10 +240,12 @@ module RouteReflection =
 
     /// <summary>Full route metadata extracted via reflection.</summary>
     type RouteInfo =
-        { /// <summary>The HTTP method for this route.</summary>
-          Method: HttpMethod
-          /// <summary>The URL path pattern for this route.</summary>
-          Path: string }
+        {
+            /// <summary>The HTTP method for this route.</summary>
+            Method: HttpMethod
+            /// <summary>The URL path pattern for this route.</summary>
+            Path: string
+        }
 
     /// <summary>Gets full route metadata for a route value using reflection.</summary>
     /// <typeparam name="T">The route union type.</typeparam>
