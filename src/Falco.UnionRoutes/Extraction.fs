@@ -4,6 +4,115 @@ open System
 open Falco
 open Microsoft.AspNetCore.Http
 
+// =========================================================================
+// Route Field Marker Types (at namespace level for easy access)
+// =========================================================================
+
+/// <summary>Marks a route field as coming from the query string instead of route parameters.</summary>
+/// <typeparam name="T">The type of the query parameter value.</typeparam>
+/// <remarks>
+/// <para>Use <c>QueryParam&lt;'T&gt; option</c> for optional query parameters that return None when missing.</para>
+/// <para>Required query parameters (without option) return an error when missing.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type PostRoute =
+///     | Search of query: QueryParam&lt;string&gt;        // GET /posts/search?query=... (required)
+///     | List of page: QueryParam&lt;int&gt; option       // GET /posts?page=2 (optional, defaults to None)
+/// </code>
+/// </example>
+type QueryParam<'T> = QueryParam of 'T
+
+/// <summary>Marks a route field as coming from a precondition extractor (auth, validation, etc.)
+/// rather than from route or query parameters.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
+/// <remarks>
+/// <para><c>PreCondition&lt;'T&gt;</c> is STRICT - it always runs and cannot be skipped by child routes.</para>
+/// <para>Use <see cref="T:Falco.UnionRoutes.OverridablePreCondition`1"/> when child routes need to skip the precondition.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type PostRoute =
+///     | List                                       // No auth required
+///     | Create of PreCondition&lt;UserId&gt;             // Requires authenticated user
+///     | Delete of PreCondition&lt;UserId&gt; * id: Guid  // Auth + route param
+/// </code>
+/// </example>
+/// <seealso cref="T:Falco.UnionRoutes.OverridablePreCondition`1"/>
+type PreCondition<'T> = PreCondition of 'T
+
+/// <summary>Marks a route field as a precondition that child routes can skip.</summary>
+/// <typeparam name="T">The type of value provided by the precondition.</typeparam>
+/// <remarks>
+/// <para>Use this ONLY when you need child routes to optionally skip the precondition.
+/// For most cases, use <see cref="T:Falco.UnionRoutes.PreCondition`1"/> instead.</para>
+/// <para>Child routes skip with <c>[&lt;SkipAllPreconditions&gt;]</c> or <c>[&lt;SkipPrecondition(typeof&lt;T&gt;)&gt;]</c>.</para>
+/// <para>When skipped, the field contains a default value - use <c>_</c> pattern to ignore it.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type ItemRoute =
+///     | List                                  // Inherits parent's OverridablePreCondition
+///     | [&lt;SkipAllPreconditions&gt;] Public       // Skips it - no auth required
+///
+/// type Route =
+///     | Items of OverridablePreCondition&lt;UserId&gt; * ItemRoute
+///
+/// // In handler, use _ to ignore skipped preconditions:
+/// match route with
+/// | Items (_, Public) -> handlePublic ()
+/// | Items (OverridablePreCondition userId, List) -> handleList userId
+/// </code>
+/// </example>
+/// <seealso cref="T:Falco.UnionRoutes.PreCondition`1"/>
+type OverridablePreCondition<'T> = OverridablePreCondition of 'T
+
+// =========================================================================
+// Precondition Skip Attributes (at namespace level for easy access)
+// =========================================================================
+
+/// <summary>Skip all <c>OverridablePreCondition&lt;'T&gt;</c> preconditions for this route case.</summary>
+/// <remarks>
+/// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
+/// <para>When skipped, the handler should ignore the value with <c>_</c> pattern.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type UserItemRoute =
+///     | List                                  // inherits parent OverridablePreCondition preconditions
+///     | [&lt;SkipAllPreconditions&gt;] Public       // skips all OverridablePreCondition, handler uses _ pattern
+/// </code>
+/// </example>
+/// <seealso cref="T:Falco.UnionRoutes.SkipPreconditionAttribute"/>
+[<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
+type SkipAllPreconditionsAttribute() =
+    inherit Attribute()
+
+/// <summary>Skip a specific <c>OverridablePreCondition&lt;'T&gt;</c> precondition type for this route case.</summary>
+/// <remarks>
+/// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
+/// <para>Can be applied multiple times to skip multiple precondition types.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type AdminRoute =
+///     | Dashboard                                         // requires all
+///     | [&lt;SkipPrecondition(typeof&lt;AdminId&gt;)&gt;] Profile     // skips OverridablePreCondition&lt;AdminId&gt; only
+/// </code>
+/// </example>
+/// <seealso cref="T:Falco.UnionRoutes.SkipAllPreconditionsAttribute"/>
+[<AttributeUsage(AttributeTargets.Property, AllowMultiple = true)>]
+type SkipPreconditionAttribute(preconditionType: Type) =
+    inherit Attribute()
+
+    /// <summary>Gets the inner type of the <c>OverridablePreCondition&lt;'T&gt;</c> to skip.</summary>
+    /// <value>The type to skip, e.g., <c>typeof&lt;AdminId&gt;</c> for <c>OverridablePreCondition&lt;AdminId&gt;</c>.</value>
+    member _.PreconditionType = preconditionType
+
+// =========================================================================
+// Extraction Module
+// =========================================================================
+
 /// <summary>Core types and functions for extracting values from HTTP requests.</summary>
 /// <remarks>
 /// <para>This module provides the building blocks for type-safe route extraction:</para>
@@ -50,111 +159,6 @@ module Extraction =
     /// </code>
     /// </example>
     type Extractor<'T, 'E> = HttpContext -> Result<'T, 'E>
-
-    // =========================================================================
-    // Route Field Marker Types
-    // =========================================================================
-
-    /// <summary>Marks a route field as coming from the query string instead of route parameters.</summary>
-    /// <typeparam name="T">The type of the query parameter value.</typeparam>
-    /// <remarks>
-    /// <para>Use <c>QueryParam&lt;'T&gt; option</c> for optional query parameters that return None when missing.</para>
-    /// <para>Required query parameters (without option) return an error when missing.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// type PostRoute =
-    ///     | Search of query: QueryParam&lt;string&gt;        // GET /posts/search?query=... (required)
-    ///     | List of page: QueryParam&lt;int&gt; option       // GET /posts?page=2 (optional, defaults to None)
-    /// </code>
-    /// </example>
-    type QueryParam<'T> = QueryParam of 'T
-
-    /// <summary>Marks a route field as coming from a precondition extractor (auth, validation, etc.)
-    /// rather than from route or query parameters.</summary>
-    /// <typeparam name="T">The type of value provided by the precondition.</typeparam>
-    /// <remarks>
-    /// <para><c>PreCondition&lt;'T&gt;</c> is STRICT - it always runs and cannot be skipped by child routes.</para>
-    /// <para>Use <see cref="T:Falco.UnionRoutes.OverridablePreCondition`1"/> when child routes need to skip the precondition.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// type PostRoute =
-    ///     | List                                       // No auth required
-    ///     | Create of PreCondition&lt;UserId&gt;             // Requires authenticated user
-    ///     | Delete of PreCondition&lt;UserId&gt; * id: Guid  // Auth + route param
-    /// </code>
-    /// </example>
-    /// <seealso cref="T:Falco.UnionRoutes.OverridablePreCondition`1"/>
-    type PreCondition<'T> = PreCondition of 'T
-
-    /// <summary>Marks a route field as a precondition that child routes can skip.</summary>
-    /// <typeparam name="T">The type of value provided by the precondition.</typeparam>
-    /// <remarks>
-    /// <para>Use this ONLY when you need child routes to optionally skip the precondition.
-    /// For most cases, use <see cref="T:Falco.UnionRoutes.PreCondition`1"/> instead.</para>
-    /// <para>Child routes skip with <c>[&lt;SkipAllPreconditions&gt;]</c> or <c>[&lt;SkipPrecondition(typeof&lt;T&gt;)&gt;]</c>.</para>
-    /// <para>When skipped, the field contains a default value - use <c>_</c> pattern to ignore it.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// type ItemRoute =
-    ///     | List                                  // Inherits parent's OverridablePreCondition
-    ///     | [&lt;SkipAllPreconditions&gt;] Public       // Skips it - no auth required
-    ///
-    /// type Route =
-    ///     | Items of OverridablePreCondition&lt;UserId&gt; * ItemRoute
-    ///
-    /// // In handler, use _ to ignore skipped preconditions:
-    /// match route with
-    /// | Items (_, Public) -> handlePublic ()
-    /// | Items (PreCondition userId, List) -> handleList userId
-    /// </code>
-    /// </example>
-    /// <seealso cref="T:Falco.UnionRoutes.PreCondition`1"/>
-    type OverridablePreCondition<'T> = OverridablePreCondition of 'T
-
-    // =========================================================================
-    // Precondition Skip Attributes
-    // =========================================================================
-
-    /// <summary>Skip all <c>OverridablePreCondition&lt;'T&gt;</c> preconditions for this route case.</summary>
-    /// <remarks>
-    /// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
-    /// <para>When skipped, the handler should ignore the value with <c>_</c> pattern.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// type UserItemRoute =
-    ///     | List                                  // inherits parent OverridablePreCondition preconditions
-    ///     | [&lt;SkipAllPreconditions&gt;] Public       // skips all OverridablePreCondition, handler uses _ pattern
-    /// </code>
-    /// </example>
-    /// <seealso cref="T:Falco.UnionRoutes.SkipPreconditionAttribute"/>
-    [<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
-    type SkipAllPreconditionsAttribute() =
-        inherit Attribute()
-
-    /// <summary>Skip a specific <c>OverridablePreCondition&lt;'T&gt;</c> precondition type for this route case.</summary>
-    /// <remarks>
-    /// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
-    /// <para>Can be applied multiple times to skip multiple precondition types.</para>
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// type AdminRoute =
-    ///     | Dashboard                                         // requires all
-    ///     | [&lt;SkipPrecondition(typeof&lt;AdminId&gt;)&gt;] Profile     // skips OverridablePreCondition&lt;AdminId&gt; only
-    /// </code>
-    /// </example>
-    /// <seealso cref="T:Falco.UnionRoutes.SkipAllPreconditionsAttribute"/>
-    [<AttributeUsage(AttributeTargets.Property, AllowMultiple = true)>]
-    type SkipPreconditionAttribute(preconditionType: Type) =
-        inherit Attribute()
-
-        /// <summary>Gets the inner type of the <c>OverridablePreCondition&lt;'T&gt;</c> to skip.</summary>
-        /// <value>The type to skip, e.g., <c>typeof&lt;AdminId&gt;</c> for <c>OverridablePreCondition&lt;AdminId&gt;</c>.</value>
-        member _.PreconditionType = preconditionType
 
     // =========================================================================
     // Extractor Configuration Types
