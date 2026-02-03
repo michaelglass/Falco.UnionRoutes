@@ -962,6 +962,7 @@ module Route =
         let optPreCase = FSharpType.GetUnionCases(optPreType).[0]
         FSharpValue.MakeUnion(optPreCase, [| defaultValue |])
 
+    [<NoComparison; NoEquality>]
     type private FieldResult<'Error> =
         | FromPrecondition of Result<obj, 'Error>
         | FromExtraction of Result<obj, string>

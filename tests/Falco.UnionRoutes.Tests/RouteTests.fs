@@ -542,7 +542,7 @@ let ``Issue #1 - Multiple single-case PreCondition routes should all enumerate``
 let ``Issue #1 - Multiple single-case PreCondition routes should have distinct paths`` () =
     let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes> ()
 
-    let paths = routes |> List.map Route.info |> List.map (fun i -> i.Path)
+    let paths = routes |> List.map (Route.info >> (fun i -> i.Path))
     // All paths should be different (not all mapping to "/")
     test <@ List.distinct paths |> List.length = 3 @>
     test <@ paths |> List.contains "/orgs/search" @>

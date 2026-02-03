@@ -3,8 +3,19 @@
     <TargetFramework>net10.0</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <!-- Warn on missing XML documentation for public types/members -->
-    <WarnOn>3390</WarnOn>
+    <WarningLevel>5</WarningLevel>
+
+    <WarnOn>
+      3390,  <!-- Warn on missing XML documentation for public types/members -->
+      1104,  <!-- Unused opens -->
+      0020,  <!-- Unused values -->
+      0044,  <!-- Incomplete pattern matches (less severe than 0025) -->
+      0025,  <!-- Incomplete pattern matches -->
+      3391,  <!-- Custom warnings (used in SqlHydra files) -->
+      0067,  <!-- Deprecated code usage -->
+      0021,  <!-- Unused recursive value -->
+      1182   <!-- Unused variables in pattern matching -->
+    </WarnOn>
 
     <!-- Package metadata -->
     <PackageId>Falco.UnionRoutes</PackageId>

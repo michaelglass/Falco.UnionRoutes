@@ -184,6 +184,7 @@ module Extraction =
     ///     combineErrors
     /// </code>
     /// </example>
+    [<NoComparison; NoEquality>]
     type FieldParser =
         {
             /// The type this parser handles (e.g., typeof<Slug>)
@@ -216,6 +217,7 @@ module Extraction =
     ///     combineErrors
     /// </code>
     /// </example>
+    [<NoComparison; NoEquality>]
     type PreconditionExtractor<'E> =
         {
             /// The marker type this extracts (e.g., typeof<PreCondition<UserId>>)
