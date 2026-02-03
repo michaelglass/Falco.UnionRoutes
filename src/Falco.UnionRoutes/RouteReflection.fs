@@ -17,16 +17,8 @@ module RouteReflection =
     let private kebabCaseRegex =
         Regex(@"([a-z])([A-Z])|([A-Z]+)([A-Z][a-z])", RegexOptions.Compiled)
 
-    /// <summary>Converts PascalCase to kebab-case.</summary>
-    /// <param name="s">The PascalCase string to convert.</param>
-    /// <returns>The kebab-case version of the string.</returns>
-    /// <example>
-    /// <code>
-    /// toKebabCase "DigestView"  // returns "digest-view"
-    /// toKebabCase "HTMLParser"  // returns "html-parser"
-    /// </code>
-    /// </example>
-    let toKebabCase (s: string) =
+    /// Converts PascalCase to kebab-case. Internal helper for path generation.
+    let internal toKebabCase (s: string) =
         kebabCaseRegex
             .Replace(
                 s,
@@ -38,11 +30,8 @@ module RouteReflection =
             )
             .ToLowerInvariant()
 
-    /// <summary>Converts a <see cref="RouteMethod"/> enum to an <see cref="HttpMethod"/> discriminated union.</summary>
-    /// <param name="rm">The RouteMethod enum value.</param>
-    /// <returns>The corresponding HttpMethod DU case.</returns>
-    /// <exception cref="System.Exception">Thrown when an unknown RouteMethod value is provided.</exception>
-    let toHttpMethod (rm: RouteMethod) : HttpMethod =
+    /// Converts RouteMethod enum to HttpMethod DU. Internal helper.
+    let internal toHttpMethod (rm: RouteMethod) : HttpMethod =
         match rm with
         | RouteMethod.Get -> HttpMethod.Get
         | RouteMethod.Post -> HttpMethod.Post
@@ -52,10 +41,8 @@ module RouteReflection =
         | RouteMethod.Any -> HttpMethod.Any
         | unknown -> failwith $"Unknown RouteMethod: {int unknown}"
 
-    /// <summary>Gets the <see cref="RouteAttribute"/> from a union case, if present.</summary>
-    /// <param name="case">The union case to inspect.</param>
-    /// <returns><c>Some attribute</c> if the case has a RouteAttribute, <c>None</c> otherwise.</returns>
-    let getRouteAttr (case: UnionCaseInfo) : RouteAttribute option =
+    /// Gets the RouteAttribute from a union case, if present. Internal helper.
+    let private getRouteAttr (case: UnionCaseInfo) : RouteAttribute option =
         case.GetCustomAttributes(typeof<RouteAttribute>)
         |> Array.tryHead
         |> Option.map (fun a -> a :?> RouteAttribute)
@@ -256,11 +243,8 @@ module RouteReflection =
             Path: string
         }
 
-    /// <summary>Gets full route metadata for a route value using reflection.</summary>
-    /// <typeparam name="T">The route union type.</typeparam>
-    /// <param name="route">The route value to inspect.</param>
-    /// <returns><c>Some info</c> with method and path, or <c>None</c> if the route has no method.</returns>
-    let tryRouteInfo (route: 'T) : RouteInfo option =
+    /// Gets full route metadata, returning None if route has no method. Internal helper.
+    let internal tryRouteInfo (route: 'T) : RouteInfo option =
         let (methodOpt, segments) = extractRouteInfo (box route)
 
         match methodOpt with
@@ -286,11 +270,8 @@ module RouteReflection =
             let case, _ = FSharpValue.GetUnionFields(route, typeof<'T>)
             failwithf "Route case '%s' is missing [<Route(...)>] attribute" case.Name
 
-    /// <summary>Gets HTTP method and path pattern as a tuple for a route value.</summary>
-    /// <typeparam name="T">The route union type.</typeparam>
-    /// <param name="route">The route value to inspect.</param>
-    /// <returns>A tuple of (HttpMethod, path pattern string).</returns>
-    let routeTuple (route: 'T) : HttpMethod * string =
+    /// Gets HTTP method and path as a tuple. Internal helper for tests.
+    let internal routeTuple (route: 'T) : HttpMethod * string =
         let info = routeInfo route
         (info.Method, info.Path)
 
@@ -613,10 +594,8 @@ module RouteReflection =
     // Falco integration
     // =========================================================================
 
-    /// <summary>Converts an <see cref="HttpMethod"/> to Falco's route function.</summary>
-    /// <param name="method">The HTTP method to convert.</param>
-    /// <returns>The corresponding Falco route function (get, post, put, delete, patch, or any).</returns>
-    let toFalcoMethod (method: HttpMethod) =
+    /// Converts HttpMethod to Falco's route function. Internal helper.
+    let internal toFalcoMethod (method: HttpMethod) =
         match method with
         | HttpMethod.Get -> get
         | HttpMethod.Post -> post

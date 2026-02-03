@@ -866,7 +866,7 @@ let ``validatePreconditions returns Ok when all preconditions registered`` () =
 
 [<Fact>]
 let ``validatePreconditions returns Error when precondition missing`` () =
-    let preconditions: Precondition<TestError> list = []
+    let preconditions: PreconditionHandler<TestError> list = []
 
     let result =
         RouteHydration.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
@@ -883,7 +883,7 @@ type RouteWithMultiplePreconditions =
 
 [<Fact>]
 let ``validatePreconditions catches all missing preconditions`` () =
-    let preconditions: Precondition<TestError> list = []
+    let preconditions: PreconditionHandler<TestError> list = []
 
     let result =
         RouteHydration.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
@@ -915,7 +915,7 @@ type RouteWithOptPre =
 
 [<Fact>]
 let ``validatePreconditions requires OptPre preconditions too`` () =
-    let preconditions: Precondition<TestError> list = []
+    let preconditions: PreconditionHandler<TestError> list = []
 
     let result =
         RouteHydration.validatePreconditions<RouteWithOptPre, TestError> preconditions
@@ -948,7 +948,7 @@ let ``validate combines structure and precondition validation`` () =
 
 [<Fact>]
 let ``validate catches missing preconditions`` () =
-    let preconditions: Precondition<TestError> list = []
+    let preconditions: PreconditionHandler<TestError> list = []
 
     let result =
         RouteHydration.validate<RouteNeedingPrecondition, TestError> preconditions
