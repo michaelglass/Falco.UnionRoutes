@@ -18,12 +18,12 @@ type TestError =
     | Forbidden
     | BadRequest of string
 
-// Routes using Pre<'T> for preconditions
+// Routes using PreCondition<'T> for preconditions
 type SimpleRoute =
     | List
     | Detail of id: Guid
-    | WithAuth of Pre<UserId>
-    | WithBoth of Pre<UserId> * id: Guid
+    | WithAuth of PreCondition<UserId>
+    | WithBoth of PreCondition<UserId> * id: Guid
 
 type StringRoute = BySlug of slug: string
 
@@ -38,37 +38,37 @@ type PostId = PostId of Guid
 
 type WrapperRoute =
     | ByPostId of id: PostId
-    | WithAuthAndPostId of Pre<UserId> * id: PostId
+    | WithAuthAndPostId of PreCondition<UserId> * id: PostId
 
 // Custom type for testing custom extractors
 type Slug = Slug of string
 
 type CustomTypeRoute =
     | BySlugCustom of slug: Slug
-    | WithAuthAndSlug of Pre<UserId> * slug: Slug
+    | WithAuthAndSlug of PreCondition<UserId> * slug: Slug
 
 // Route without preconditions
 type NoAuthRoute =
     | SimpleNoAuth of id: Guid
     | WithWrapper of id: PostId
 
-// Routes for testing Query<'T> (query string parameters)
+// Routes for testing QueryParam<'T> (query string parameters)
 type QueryRoute =
-    | WithQueryString of query: Query<string>
-    | WithQueryInt of page: Query<int>
-    | WithOptionalQuery of query: Query<string> option
-    | WithOptionalQueryInt of page: Query<int> option
-    | MixedRouteAndQuery of id: Guid * sort: Query<string>
-    | MixedWithOptional of id: Guid * page: Query<int> option
+    | WithQueryString of query: QueryParam<string>
+    | WithQueryInt of page: QueryParam<int>
+    | WithOptionalQuery of query: QueryParam<string> option
+    | WithOptionalQueryInt of page: QueryParam<int> option
+    | MixedRouteAndQuery of id: Guid * sort: QueryParam<string>
+    | MixedWithOptional of id: Guid * page: QueryParam<int> option
 
 // Route for testing error accumulation
 type MultiFieldRoute = TwoRequired of a: Guid * b: int
 
 // Route for testing multiple preconditions
 type MultiPreRoute =
-    | NeedsUser of Pre<UserId>
-    | NeedsAdmin of Pre<AdminId>
-    | NeedsBoth of Pre<UserId> * Pre<AdminId>
+    | NeedsUser of PreCondition<UserId>
+    | NeedsAdmin of PreCondition<AdminId>
+    | NeedsBoth of PreCondition<UserId> * PreCondition<AdminId>
 
 // =============================================================================
 // Mock helpers
@@ -98,7 +98,7 @@ let createMockContextWithRouteAndQuery (routeValues: (string * string) list) (qu
 
     context :> HttpContext
 
-let mockUserAuth: Pipeline<UserId, TestError> =
+let mockUserAuth: Extractor<UserId, TestError> =
     fun ctx ->
         match ctx.Request.Headers.TryGetValue("X-User-Id") with
         | true, values ->
@@ -107,7 +107,7 @@ let mockUserAuth: Pipeline<UserId, TestError> =
             | false, _ -> Error NotAuthenticated
         | false, _ -> Error NotAuthenticated
 
-let mockAdminAuth: Pipeline<AdminId, TestError> =
+let mockAdminAuth: Extractor<AdminId, TestError> =
     fun ctx ->
         match ctx.Request.Headers.TryGetValue("X-Admin-Id") with
         | true, values ->
@@ -127,64 +127,53 @@ let combineErrors (errors: TestError list) =
 
 // Precondition factories (create fresh each time to avoid module initialization issues)
 let userPrecondition () =
-    RouteHydration.forPre<UserId, TestError> mockUserAuth
+    Extractor.precondition<UserId, TestError> mockUserAuth
 
 let adminPrecondition () =
-    RouteHydration.forPre<AdminId, TestError> mockAdminAuth
+    Extractor.precondition<AdminId, TestError> mockAdminAuth
 
 let hydrate () =
-    RouteHydration.create<SimpleRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<SimpleRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
 
 let hydrateString () =
-    RouteHydration.create<StringRoute, TestError> [] [] makeError combineErrors
+    Route.extractor<StringRoute, TestError> [] [] makeError combineErrors
 
 let hydrateInt () =
-    RouteHydration.create<IntRoute, TestError> [] [] makeError combineErrors
+    Route.extractor<IntRoute, TestError> [] [] makeError combineErrors
 
 let hydrateInt64 () =
-    RouteHydration.create<Int64Route, TestError> [] [] makeError combineErrors
+    Route.extractor<Int64Route, TestError> [] [] makeError combineErrors
 
 let hydrateBool () =
-    RouteHydration.create<BoolRoute, TestError> [] [] makeError combineErrors
+    Route.extractor<BoolRoute, TestError> [] [] makeError combineErrors
 
 let hydrateWrapper () =
-    RouteHydration.create<WrapperRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<WrapperRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
 
-// Custom extractor for Slug type
-let slugExtractor: TypeExtractor =
-    fun fieldName fieldType ctx ->
-        if fieldType = typeof<Slug> then
-            let route = Falco.Request.getRoute ctx
-            let value = route.GetString fieldName
-
-            if String.IsNullOrEmpty(value) then
-                Some(Error $"Missing slug: {fieldName}")
-            else
-                Some(Ok(box (Slug value)))
-        else
-            None
+// Custom parser for Slug type
+let slugParser: Parser<Slug> = fun s -> Ok(Slug s)
 
 let hydrateCustom () =
-    RouteHydration.create<CustomTypeRoute, TestError> [ userPrecondition () ] [ slugExtractor ] makeError combineErrors
-
-let hydrateNoAuth () =
-    RouteHydration.create<NoAuthRoute, TestError> [] [] makeError combineErrors
-
-let hydrateNoAuthWithCustom () =
-    RouteHydration.create<CustomTypeRoute, TestError> [] [ slugExtractor ] makeError combineErrors
-
-let hydrateQuery () =
-    RouteHydration.create<QueryRoute, TestError> [] [] makeError combineErrors
-
-let hydrateMultiField () =
-    RouteHydration.create<MultiFieldRoute, TestError> [] [] makeError combineErrors
-
-let hydrateMultiPre () =
-    RouteHydration.create<MultiPreRoute, TestError>
-        [ userPrecondition (); adminPrecondition () ]
-        []
+    Route.extractor<CustomTypeRoute, TestError>
+        [ userPrecondition () ]
+        [ Extractor.parser slugParser ]
         makeError
         combineErrors
+
+let hydrateNoAuth () =
+    Route.extractor<NoAuthRoute, TestError> [] [] makeError combineErrors
+
+let hydrateNoAuthWithCustom () =
+    Route.extractor<CustomTypeRoute, TestError> [] [ Extractor.parser slugParser ] makeError combineErrors
+
+let hydrateQuery () =
+    Route.extractor<QueryRoute, TestError> [] [] makeError combineErrors
+
+let hydrateMultiField () =
+    Route.extractor<MultiFieldRoute, TestError> [] [] makeError combineErrors
+
+let hydrateMultiPre () =
+    Route.extractor<MultiPreRoute, TestError> [ userPrecondition (); adminPrecondition () ] [] makeError combineErrors
 
 // =============================================================================
 // Unit route tests (no fields)
@@ -237,18 +226,18 @@ let ``error message contains field name for missing param`` () =
 // =============================================================================
 
 [<Fact>]
-let ``hydrates Pre field from precondition`` () =
+let ``hydrates PreCondition field from precondition`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithAuth(Pre(UserId Guid.Empty)))
+    let pipeline = hydrate () (SimpleRoute.WithAuth(PreCondition(UserId Guid.Empty)))
     let result = pipeline ctx
-    Assert.Equal(Ok(SimpleRoute.WithAuth(Pre(UserId userId))), result)
+    Assert.Equal(Ok(SimpleRoute.WithAuth(PreCondition(UserId userId))), result)
 
 [<Fact>]
 let ``returns precondition error when not authenticated`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrate () (SimpleRoute.WithAuth(Pre(UserId Guid.Empty)))
+    let pipeline = hydrate () (SimpleRoute.WithAuth(PreCondition(UserId Guid.Empty)))
     let result = pipeline ctx
     // Precondition errors preserve their original type
     Assert.Equal(Error NotAuthenticated, result)
@@ -258,20 +247,26 @@ let ``returns precondition error when not authenticated`` () =
 // =============================================================================
 
 [<Fact>]
-let ``hydrates both Pre and Guid fields`` () =
+let ``hydrates both PreCondition and Guid fields`` () =
     let userId = Guid.NewGuid()
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
+
+    let pipeline =
+        hydrate () (SimpleRoute.WithBoth(PreCondition(UserId Guid.Empty), Guid.Empty))
+
     let result = pipeline ctx
-    Assert.Equal(Ok(SimpleRoute.WithBoth(Pre(UserId userId), postId)), result)
+    Assert.Equal(Ok(SimpleRoute.WithBoth(PreCondition(UserId userId), postId)), result)
 
 [<Fact>]
 let ``returns precondition error even with valid Guid when not authenticated`` () =
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
-    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
+
+    let pipeline =
+        hydrate () (SimpleRoute.WithBoth(PreCondition(UserId Guid.Empty), Guid.Empty))
+
     let result = pipeline ctx
     // Precondition errors preserve their original type
     Assert.Equal(Error NotAuthenticated, result)
@@ -281,7 +276,10 @@ let ``returns Guid error with valid precondition but invalid Guid`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", "invalid") ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrate () (SimpleRoute.WithBoth(Pre(UserId Guid.Empty), Guid.Empty))
+
+    let pipeline =
+        hydrate () (SimpleRoute.WithBoth(PreCondition(UserId Guid.Empty), Guid.Empty))
+
     let result = pipeline ctx
     Assert.True(Result.isError result)
 
@@ -290,28 +288,31 @@ let ``returns Guid error with valid precondition but invalid Guid`` () =
 // =============================================================================
 
 [<Fact>]
-let ``hydrates Pre<UserId> with user precondition`` () =
+let ``hydrates PreCondition<UserId> with user precondition`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsUser(Pre(UserId Guid.Empty)))
+
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsUser(PreCondition(UserId Guid.Empty)))
+
     let result = pipeline ctx
-    Assert.Equal(Ok(MultiPreRoute.NeedsUser(Pre(UserId userId))), result)
+    Assert.Equal(Ok(MultiPreRoute.NeedsUser(PreCondition(UserId userId))), result)
 
 [<Fact>]
-let ``hydrates Pre<AdminId> with admin precondition`` () =
+let ``hydrates PreCondition<AdminId> with admin precondition`` () =
     let adminId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
 
     let pipeline =
-        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(PreCondition(AdminId Guid.Empty)))
 
     let result = pipeline ctx
-    Assert.Equal(Ok(MultiPreRoute.NeedsAdmin(Pre(AdminId adminId))), result)
+    Assert.Equal(Ok(MultiPreRoute.NeedsAdmin(PreCondition(AdminId adminId))), result)
 
 [<Fact>]
-let ``hydrates both Pre<UserId> and Pre<AdminId>`` () =
+let ``hydrates both PreCondition<UserId> and PreCondition<AdminId>`` () =
     let userId = Guid.NewGuid()
     let adminId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
@@ -319,15 +320,18 @@ let ``hydrates both Pre<UserId> and Pre<AdminId>`` () =
     ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
 
     let pipeline =
-        hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+        hydrateMultiPre () (MultiPreRoute.NeedsBoth(PreCondition(UserId Guid.Empty), PreCondition(AdminId Guid.Empty)))
 
     let result = pipeline ctx
-    Assert.Equal(Ok(MultiPreRoute.NeedsBoth(Pre(UserId userId), Pre(AdminId adminId))), result)
+    Assert.Equal(Ok(MultiPreRoute.NeedsBoth(PreCondition(UserId userId), PreCondition(AdminId adminId))), result)
 
 [<Fact>]
 let ``returns correct error for missing user precondition`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrateMultiPre () (MultiPreRoute.NeedsUser(Pre(UserId Guid.Empty)))
+
+    let pipeline =
+        hydrateMultiPre () (MultiPreRoute.NeedsUser(PreCondition(UserId Guid.Empty)))
+
     let result = pipeline ctx
     Assert.Equal(Error NotAuthenticated, result)
 
@@ -336,7 +340,7 @@ let ``returns correct error for missing admin precondition`` () =
     let ctx = createMockContextWithRoute []
 
     let pipeline =
-        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(Pre(AdminId Guid.Empty)))
+        hydrateMultiPre () (MultiPreRoute.NeedsAdmin(PreCondition(AdminId Guid.Empty)))
 
     let result = pipeline ctx
     Assert.Equal(Error Forbidden, result)
@@ -346,7 +350,7 @@ let ``accumulates errors when both preconditions fail`` () =
     let ctx = createMockContextWithRoute []
     // Neither user nor admin headers set
     let pipeline =
-        hydrateMultiPre () (MultiPreRoute.NeedsBoth(Pre(UserId Guid.Empty), Pre(AdminId Guid.Empty)))
+        hydrateMultiPre () (MultiPreRoute.NeedsBoth(PreCondition(UserId Guid.Empty), PreCondition(AdminId Guid.Empty)))
 
     let result = pipeline ctx
     // combineErrors should combine both errors
@@ -531,17 +535,17 @@ let ``returns error for invalid Guid in wrapper type`` () =
     Assert.True(Result.isError result)
 
 [<Fact>]
-let ``hydrates both Pre and wrapper type fields`` () =
+let ``hydrates both PreCondition and wrapper type fields`` () =
     let userId = Guid.NewGuid()
     let postId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("id", postId.ToString()) ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
     let pipeline =
-        hydrateWrapper () (WrapperRoute.WithAuthAndPostId(Pre(UserId Guid.Empty), PostId Guid.Empty))
+        hydrateWrapper () (WrapperRoute.WithAuthAndPostId(PreCondition(UserId Guid.Empty), PostId Guid.Empty))
 
     let result = pipeline ctx
-    Assert.Equal(Ok(WrapperRoute.WithAuthAndPostId(Pre(UserId userId), PostId postId)), result)
+    Assert.Equal(Ok(WrapperRoute.WithAuthAndPostId(PreCondition(UserId userId), PostId postId)), result)
 
 // =============================================================================
 // Custom extractor tests
@@ -561,16 +565,16 @@ let ``custom extractor returns error for missing value`` () =
     test <@ Result.isError result @>
 
 [<Fact>]
-let ``custom extractor works with Pre`` () =
+let ``custom extractor works with PreCondition`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute [ ("slug", "my-post") ]
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
     let pipeline =
-        hydrateCustom () (CustomTypeRoute.WithAuthAndSlug(Pre(UserId Guid.Empty), Slug ""))
+        hydrateCustom () (CustomTypeRoute.WithAuthAndSlug(PreCondition(UserId Guid.Empty), Slug ""))
 
     let result = pipeline ctx
-    Assert.Equal(Ok(CustomTypeRoute.WithAuthAndSlug(Pre(UserId userId), Slug "my-post")), result)
+    Assert.Equal(Ok(CustomTypeRoute.WithAuthAndSlug(PreCondition(UserId userId), Slug "my-post")), result)
 
 // =============================================================================
 // No precondition tests
@@ -595,31 +599,31 @@ let ``hydrates wrapper type without preconditions`` () =
 // =============================================================================
 
 [<Fact>]
-let ``Query string field extracts from query`` () =
+let ``QueryParam string field extracts from query`` () =
     let ctx = createMockContextWithRouteAndQuery [] [ ("query", "hello") ]
-    let pipeline = hydrateQuery () (QueryRoute.WithQueryString(Query ""))
-    test <@ pipeline ctx = Ok(QueryRoute.WithQueryString(Query "hello")) @>
+    let pipeline = hydrateQuery () (QueryRoute.WithQueryString(QueryParam ""))
+    test <@ pipeline ctx = Ok(QueryRoute.WithQueryString(QueryParam "hello")) @>
 
 [<Fact>]
-let ``Query int field extracts from query`` () =
+let ``QueryParam int field extracts from query`` () =
     let ctx = createMockContextWithRouteAndQuery [] [ ("page", "10") ]
-    let pipeline = hydrateQuery () (QueryRoute.WithQueryInt(Query 0))
-    test <@ pipeline ctx = Ok(QueryRoute.WithQueryInt(Query 10)) @>
+    let pipeline = hydrateQuery () (QueryRoute.WithQueryInt(QueryParam 0))
+    test <@ pipeline ctx = Ok(QueryRoute.WithQueryInt(QueryParam 10)) @>
 
 [<Fact>]
-let ``Query field returns error when missing`` () =
+let ``QueryParam field returns error when missing`` () =
     let ctx = createMockContextWithRouteAndQuery [] []
-    let pipeline = hydrateQuery () (QueryRoute.WithQueryString(Query ""))
+    let pipeline = hydrateQuery () (QueryRoute.WithQueryString(QueryParam ""))
     test <@ Result.isError (pipeline ctx) @>
 
 [<Fact>]
-let ``optional Query field returns Some when present`` () =
+let ``optional QueryParam field returns Some when present`` () =
     let ctx = createMockContextWithRouteAndQuery [] [ ("query", "search") ]
     let pipeline = hydrateQuery () (QueryRoute.WithOptionalQuery None)
-    test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQuery(Some(Query "search"))) @>
+    test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQuery(Some(QueryParam "search"))) @>
 
 [<Fact>]
-let ``optional Query field returns None when missing`` () =
+let ``optional QueryParam field returns None when missing`` () =
     let ctx = createMockContextWithRouteAndQuery [] []
     let pipeline = hydrateQuery () (QueryRoute.WithOptionalQuery None)
     test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQuery None) @>
@@ -631,23 +635,25 @@ let ``mixed route and query parameters`` () =
     let ctx =
         createMockContextWithRouteAndQuery [ ("id", id.ToString()) ] [ ("sort", "date") ]
 
-    let pipeline = hydrateQuery () (QueryRoute.MixedRouteAndQuery(Guid.Empty, Query ""))
-    test <@ pipeline ctx = Ok(QueryRoute.MixedRouteAndQuery(id, Query "date")) @>
+    let pipeline =
+        hydrateQuery () (QueryRoute.MixedRouteAndQuery(Guid.Empty, QueryParam ""))
+
+    test <@ pipeline ctx = Ok(QueryRoute.MixedRouteAndQuery(id, QueryParam "date")) @>
 
 [<Fact>]
-let ``optional Query int returns Some when present`` () =
+let ``optional QueryParam int returns Some when present`` () =
     let ctx = createMockContextWithRouteAndQuery [] [ ("page", "42") ]
     let pipeline = hydrateQuery () (QueryRoute.WithOptionalQueryInt None)
-    test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQueryInt(Some(Query 42))) @>
+    test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQueryInt(Some(QueryParam 42))) @>
 
 [<Fact>]
-let ``optional Query int returns None when missing`` () =
+let ``optional QueryParam int returns None when missing`` () =
     let ctx = createMockContextWithRouteAndQuery [] []
     let pipeline = hydrateQuery () (QueryRoute.WithOptionalQueryInt None)
     test <@ pipeline ctx = Ok(QueryRoute.WithOptionalQueryInt None) @>
 
 [<Fact>]
-let ``optional Query int returns error for invalid value`` () =
+let ``optional QueryParam int returns error for invalid value`` () =
     let ctx = createMockContextWithRouteAndQuery [] [ ("page", "abc") ]
     let pipeline = hydrateQuery () (QueryRoute.WithOptionalQueryInt None)
     test <@ Result.isError (pipeline ctx) @>
@@ -660,7 +666,7 @@ let ``mixed route param and optional query`` () =
         createMockContextWithRouteAndQuery [ ("id", id.ToString()) ] [ ("page", "5") ]
 
     let pipeline = hydrateQuery () (QueryRoute.MixedWithOptional(Guid.Empty, None))
-    test <@ pipeline ctx = Ok(QueryRoute.MixedWithOptional(id, Some(Query 5))) @>
+    test <@ pipeline ctx = Ok(QueryRoute.MixedWithOptional(id, Some(QueryParam 5))) @>
 
 [<Fact>]
 let ``mixed route param works without optional query`` () =
@@ -693,14 +699,14 @@ let ``hydration succeeds when all fields valid`` () =
     test <@ pipeline ctx = Ok(MultiFieldRoute.TwoRequired(id, 42)) @>
 
 // =============================================================================
-// OptPre<'T> tests (skippable preconditions)
+// OverridablePreCondition<'T> tests (skippable preconditions)
 // =============================================================================
 
-// Routes using OptPre<'T> for skippable preconditions
-type OptPreRoute =
-    | WithOptAuth of OptPre<UserId>
-    | WithBothPreTypes of Pre<AdminId> * OptPre<UserId>
-    | WithOptAuthAndId of OptPre<UserId> * id: Guid
+// Routes using OverridablePreCondition<'T> for skippable preconditions
+type OverridablePreConditionRoute =
+    | WithOptAuth of OverridablePreCondition<UserId>
+    | WithBothPreTypes of PreCondition<AdminId> * OverridablePreCondition<UserId>
+    | WithOptAuthAndId of OverridablePreCondition<UserId> * id: Guid
 
 // Nested routes demonstrating skip behavior
 type ChildRoute =
@@ -708,124 +714,158 @@ type ChildRoute =
     | [<SkipAllPreconditions>] Public
     | [<SkipPrecondition(typeof<UserId>)>] PartiallyPublic
 
-type ParentWithOptPre = Children of OptPre<UserId> * ChildRoute
+type ParentWithOverridablePreCondition = Children of OverridablePreCondition<UserId> * ChildRoute
 
-type ParentWithBothPre = Children of Pre<AdminId> * OptPre<UserId> * ChildRoute
+type ParentWithBothPreConditions = Children of PreCondition<AdminId> * OverridablePreCondition<UserId> * ChildRoute
 
-let optPrePrecondition () =
-    RouteHydration.forOptPre<UserId, TestError> mockUserAuth
+let overridablePreCondition () =
+    Extractor.overridablePrecondition<UserId, TestError> mockUserAuth
 
-let hydrateOptPre () =
-    RouteHydration.create<OptPreRoute, TestError> [ optPrePrecondition () ] [] makeError combineErrors
+let hydrateOverridablePreCondition () =
+    Route.extractor<OverridablePreConditionRoute, TestError> [ overridablePreCondition () ] [] makeError combineErrors
 
-let hydrateOptPreWithAdmin () =
-    RouteHydration.create<OptPreRoute, TestError>
-        [ optPrePrecondition (); adminPrecondition () ]
+let hydrateOverridablePreConditionWithAdmin () =
+    Route.extractor<OverridablePreConditionRoute, TestError>
+        [ overridablePreCondition (); adminPrecondition () ]
         []
         makeError
         combineErrors
 
-let hydrateParentWithOptPre () =
-    RouteHydration.create<ParentWithOptPre, TestError> [ optPrePrecondition () ] [] makeError combineErrors
+let hydrateParentWithOverridablePreCondition () =
+    Route.extractor<ParentWithOverridablePreCondition, TestError>
+        [ overridablePreCondition () ]
+        []
+        makeError
+        combineErrors
 
-let hydrateParentWithBothPre () =
-    RouteHydration.create<ParentWithBothPre, TestError>
-        [ adminPrecondition (); optPrePrecondition () ]
+let hydrateParentWithBothPreConditions () =
+    Route.extractor<ParentWithBothPreConditions, TestError>
+        [ adminPrecondition (); overridablePreCondition () ]
         []
         makeError
         combineErrors
 
 [<Fact>]
-let ``OptPre field hydrates from precondition when authenticated`` () =
+let ``OverridablePreCondition field hydrates from precondition when authenticated`` () =
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
-    let pipeline = hydrateOptPre () (OptPreRoute.WithOptAuth(OptPre(UserId Guid.Empty)))
+
+    let pipeline =
+        hydrateOverridablePreCondition
+            ()
+            (OverridablePreConditionRoute.WithOptAuth(OverridablePreCondition(UserId Guid.Empty)))
+
     let result = pipeline ctx
-    Assert.Equal(Ok(OptPreRoute.WithOptAuth(OptPre(UserId userId))), result)
+    Assert.Equal(Ok(OverridablePreConditionRoute.WithOptAuth(OverridablePreCondition(UserId userId))), result)
 
 [<Fact>]
-let ``OptPre field returns error when not authenticated (without skip)`` () =
+let ``OverridablePreCondition field returns error when not authenticated (without skip)`` () =
     let ctx = createMockContextWithRoute []
-    let pipeline = hydrateOptPre () (OptPreRoute.WithOptAuth(OptPre(UserId Guid.Empty)))
+
+    let pipeline =
+        hydrateOverridablePreCondition
+            ()
+            (OverridablePreConditionRoute.WithOptAuth(OverridablePreCondition(UserId Guid.Empty)))
+
     let result = pipeline ctx
     Assert.Equal(Error NotAuthenticated, result)
 
 [<Fact>]
-let ``OptPre with SkipAllPreconditions provides sentinel value`` () =
+let ``OverridablePreCondition with SkipAllPreconditions provides sentinel value`` () =
     let ctx = createMockContextWithRoute []
     // No auth header - would normally fail
     let pipeline =
-        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.Public))
+        hydrateParentWithOverridablePreCondition
+            ()
+            (ParentWithOverridablePreCondition.Children(OverridablePreCondition(UserId Guid.Empty), ChildRoute.Public))
 
     let result = pipeline ctx
-    // Should succeed because OptPre is skipped - provides sentinel value
+    // Should succeed because OverridablePreCondition is skipped - provides sentinel value
     match result with
-    | Ok(ParentWithOptPre.Children(OptPre(UserId uid), ChildRoute.Public)) ->
+    | Ok(ParentWithOverridablePreCondition.Children(OverridablePreCondition(UserId uid), ChildRoute.Public)) ->
         // Sentinel value should be Guid.Empty (default for value type inside wrapper)
         test <@ uid = Guid.Empty @>
     | Ok _ -> Assert.Fail("Unexpected route structure")
     | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
 
 [<Fact>]
-let ``OptPre without skip still requires authentication`` () =
+let ``OverridablePreCondition without skip still requires authentication`` () =
     let ctx = createMockContextWithRoute []
     // No auth header - should fail because ChildRoute.Normal doesn't skip
     let pipeline =
-        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.Normal))
+        hydrateParentWithOverridablePreCondition
+            ()
+            (ParentWithOverridablePreCondition.Children(OverridablePreCondition(UserId Guid.Empty), ChildRoute.Normal))
 
     let result = pipeline ctx
     Assert.Equal(Error NotAuthenticated, result)
 
 [<Fact>]
-let ``Pre is NOT affected by SkipAllPreconditions`` () =
+let ``PreCondition is NOT affected by SkipAllPreconditions`` () =
     let ctx = createMockContextWithRoute []
-    // No auth headers - Pre<AdminId> should still fail even with SkipAllPreconditions on child
+    // No auth headers - PreCondition<AdminId> should still fail even with SkipAllPreconditions on child
     let pipeline =
-        hydrateParentWithBothPre
+        hydrateParentWithBothPreConditions
             ()
-            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Public))
+            (ParentWithBothPreConditions.Children(
+                PreCondition(AdminId Guid.Empty),
+                OverridablePreCondition(UserId Guid.Empty),
+                ChildRoute.Public
+            ))
 
     let result = pipeline ctx
-    // Should fail because Pre<AdminId> always runs (not skippable)
+    // Should fail because PreCondition<AdminId> always runs (not skippable)
     Assert.Equal(Error Forbidden, result)
 
 [<Fact>]
-let ``Pre runs but OptPre skipped with SkipAllPreconditions`` () =
+let ``PreCondition runs but OverridablePreCondition skipped with SkipAllPreconditions`` () =
     let adminId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
     ctx.Request.Headers.Append("X-Admin-Id", adminId.ToString())
-    // Admin auth provided, but no user auth - OptPre should be skipped
+    // Admin auth provided, but no user auth - OverridablePreCondition should be skipped
     let pipeline =
-        hydrateParentWithBothPre
+        hydrateParentWithBothPreConditions
             ()
-            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Public))
+            (ParentWithBothPreConditions.Children(
+                PreCondition(AdminId Guid.Empty),
+                OverridablePreCondition(UserId Guid.Empty),
+                ChildRoute.Public
+            ))
 
     let result = pipeline ctx
 
     match result with
-    | Ok(ParentWithBothPre.Children(Pre(AdminId aid), OptPre(UserId uid), ChildRoute.Public)) ->
+    | Ok(ParentWithBothPreConditions.Children(PreCondition(AdminId aid),
+                                              OverridablePreCondition(UserId uid),
+                                              ChildRoute.Public)) ->
         test <@ aid = adminId @>
         test <@ uid = Guid.Empty @> // Sentinel value
     | Ok _ -> Assert.Fail("Unexpected route structure")
     | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
 
 [<Fact>]
-let ``SkipPrecondition skips specific OptPre type`` () =
+let ``SkipPrecondition skips specific OverridablePreCondition type`` () =
     let ctx = createMockContextWithRoute []
-    // No auth header - OptPre<UserId> should be skipped for PartiallyPublic
+    // No auth header - OverridablePreCondition<UserId> should be skipped for PartiallyPublic
     let pipeline =
-        hydrateParentWithOptPre () (ParentWithOptPre.Children(OptPre(UserId Guid.Empty), ChildRoute.PartiallyPublic))
+        hydrateParentWithOverridablePreCondition
+            ()
+            (ParentWithOverridablePreCondition.Children(
+                OverridablePreCondition(UserId Guid.Empty),
+                ChildRoute.PartiallyPublic
+            ))
 
     let result = pipeline ctx
 
     match result with
-    | Ok(ParentWithOptPre.Children(OptPre(UserId uid), ChildRoute.PartiallyPublic)) -> test <@ uid = Guid.Empty @> // Sentinel value
+    | Ok(ParentWithOverridablePreCondition.Children(OverridablePreCondition(UserId uid), ChildRoute.PartiallyPublic)) ->
+        test <@ uid = Guid.Empty @> // Sentinel value
     | Ok _ -> Assert.Fail("Unexpected route structure")
     | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
 
 [<Fact>]
-let ``Both Pre and OptPre work when both headers provided`` () =
+let ``Both PreCondition and OverridablePreCondition work when both headers provided`` () =
     let adminId = Guid.NewGuid()
     let userId = Guid.NewGuid()
     let ctx = createMockContextWithRoute []
@@ -833,14 +873,20 @@ let ``Both Pre and OptPre work when both headers provided`` () =
     ctx.Request.Headers.Append("X-User-Id", userId.ToString())
 
     let pipeline =
-        hydrateParentWithBothPre
+        hydrateParentWithBothPreConditions
             ()
-            (ParentWithBothPre.Children(Pre(AdminId Guid.Empty), OptPre(UserId Guid.Empty), ChildRoute.Normal))
+            (ParentWithBothPreConditions.Children(
+                PreCondition(AdminId Guid.Empty),
+                OverridablePreCondition(UserId Guid.Empty),
+                ChildRoute.Normal
+            ))
 
     let result = pipeline ctx
 
     match result with
-    | Ok(ParentWithBothPre.Children(Pre(AdminId aid), OptPre(UserId uid), ChildRoute.Normal)) ->
+    | Ok(ParentWithBothPreConditions.Children(PreCondition(AdminId aid),
+                                              OverridablePreCondition(UserId uid),
+                                              ChildRoute.Normal)) ->
         test <@ aid = adminId @>
         test <@ uid = userId @>
     | Ok _ -> Assert.Fail("Unexpected route structure")
@@ -850,26 +896,26 @@ let ``Both Pre and OptPre work when both headers provided`` () =
 // Precondition validation tests
 // =============================================================================
 
-/// Route with Pre<UserId> that requires a precondition
+/// Route with PreCondition<UserId> that requires a precondition
 type RouteNeedingPrecondition =
     | Public
-    | Private of Pre<UserId>
+    | Private of PreCondition<UserId>
 
 [<Fact>]
 let ``validatePreconditions returns Ok when all preconditions registered`` () =
-    let preconditions = [ RouteHydration.forPre<UserId, TestError> mockUserAuth ]
+    let preconditions = [ Extractor.precondition<UserId, TestError> mockUserAuth ]
 
     let result =
-        RouteHydration.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
+        Route.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
 
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validatePreconditions returns Error when precondition missing`` () =
-    let preconditions: PreconditionHandler<TestError> list = []
+    let preconditions: PreconditionExtractor<TestError> list = []
 
     let result =
-        RouteHydration.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
+        Route.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
@@ -877,59 +923,60 @@ let ``validatePreconditions returns Error when precondition missing`` () =
 
 /// Route with multiple precondition types
 type RouteWithMultiplePreconditions =
-    | Admin of Pre<AdminId>
-    | User of Pre<UserId>
-    | Both of Pre<AdminId> * Pre<UserId>
+    | Admin of PreCondition<AdminId>
+    | User of PreCondition<UserId>
+    | Both of PreCondition<AdminId> * PreCondition<UserId>
 
 [<Fact>]
 let ``validatePreconditions catches all missing preconditions`` () =
-    let preconditions: PreconditionHandler<TestError> list = []
+    let preconditions: PreconditionExtractor<TestError> list = []
 
     let result =
-        RouteHydration.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
+        Route.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
 
     match result with
     | Error errors ->
         test
             <@
                 errors
-                |> List.exists (fun e -> e.Contains("Pre<UserId>") || e.Contains("Pre<AdminId>"))
+                |> List.exists (fun e -> e.Contains("PreCondition<UserId>") || e.Contains("PreCondition<AdminId>"))
             @>
     | Ok() -> failwith "Expected validation error for missing preconditions"
 
 [<Fact>]
 let ``validatePreconditions passes when all multiple preconditions registered`` () =
     let preconditions =
-        [ RouteHydration.forPre<UserId, TestError> mockUserAuth
-          RouteHydration.forPre<AdminId, TestError> mockAdminAuth ]
+        [ Extractor.precondition<UserId, TestError> mockUserAuth
+          Extractor.precondition<AdminId, TestError> mockAdminAuth ]
 
     let result =
-        RouteHydration.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
+        Route.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
 
     test <@ result = Ok() @>
 
-/// Route with OptPre<UserId>
-type RouteWithOptPre =
-    | Normal of OptPre<UserId>
+/// Route with OverridablePreCondition<UserId>
+type RouteWithOverridablePreCondition =
+    | Normal of OverridablePreCondition<UserId>
     | [<SkipAllPreconditions>] Public
 
 [<Fact>]
-let ``validatePreconditions requires OptPre preconditions too`` () =
-    let preconditions: PreconditionHandler<TestError> list = []
+let ``validatePreconditions requires OverridablePreCondition preconditions too`` () =
+    let preconditions: PreconditionExtractor<TestError> list = []
 
     let result =
-        RouteHydration.validatePreconditions<RouteWithOptPre, TestError> preconditions
+        Route.validatePreconditions<RouteWithOverridablePreCondition, TestError> preconditions
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
-    | Ok() -> failwith "Expected validation error for missing OptPre precondition"
+    | Ok() -> failwith "Expected validation error for missing OverridablePreCondition precondition"
 
 [<Fact>]
-let ``validatePreconditions passes with OptPre precondition registered`` () =
-    let preconditions = [ RouteHydration.forOptPre<UserId, TestError> mockUserAuth ]
+let ``validatePreconditions passes with OverridablePreCondition precondition registered`` () =
+    let preconditions =
+        [ Extractor.overridablePrecondition<UserId, TestError> mockUserAuth ]
 
     let result =
-        RouteHydration.validatePreconditions<RouteWithOptPre, TestError> preconditions
+        Route.validatePreconditions<RouteWithOverridablePreCondition, TestError> preconditions
 
     test <@ result = Ok() @>
 
@@ -939,19 +986,17 @@ let ``validatePreconditions passes with OptPre precondition registered`` () =
 
 [<Fact>]
 let ``validate combines structure and precondition validation`` () =
-    let preconditions = [ RouteHydration.forPre<UserId, TestError> mockUserAuth ]
+    let preconditions = [ Extractor.precondition<UserId, TestError> mockUserAuth ]
 
-    let result =
-        RouteHydration.validate<RouteNeedingPrecondition, TestError> preconditions
+    let result = Route.validate<RouteNeedingPrecondition, TestError> preconditions
 
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validate catches missing preconditions`` () =
-    let preconditions: PreconditionHandler<TestError> list = []
+    let preconditions: PreconditionExtractor<TestError> list = []
 
-    let result =
-        RouteHydration.validate<RouteNeedingPrecondition, TestError> preconditions
+    let result = Route.validate<RouteNeedingPrecondition, TestError> preconditions
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
