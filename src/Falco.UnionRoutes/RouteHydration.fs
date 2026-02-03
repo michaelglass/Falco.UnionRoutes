@@ -94,17 +94,27 @@ type OptPre<'T> = OptPre of 'T
 /// <typeparam name="T">The type of value provided by the precondition.</typeparam>
 type OptionalPreCondition<'T> = OptPre<'T>
 
-/// <summary>A precondition that provides a value of a specific type from the HTTP context.</summary>
-/// <typeparam name="Error">The error type returned when the precondition fails.</typeparam>
+/// <summary>Configuration for extracting a <c>Pre&lt;'T&gt;</c> or <c>OptPre&lt;'T&gt;</c> value from HTTP context.</summary>
+/// <typeparam name="Error">The error type returned when extraction fails.</typeparam>
 /// <remarks>
-/// Used for auth, validation, or any computation that should run before route handling.
-/// Create instances using <see cref="RouteHydration.forPre"/> or <see cref="RouteHydration.forOptPre"/>.
+/// <para>This is NOT a precondition itself - it's the handler that knows how to extract one.</para>
+/// <para>Create instances using <see cref="RouteHydration.forPre"/> or <see cref="RouteHydration.forOptPre"/>.</para>
 /// </remarks>
-type Precondition<'Error> =
+/// <example>
+/// <code>
+/// // Create a handler that extracts UserId from auth cookie
+/// let authHandler: PreconditionHandler&lt;AppError&gt; =
+///     RouteHydration.forPre&lt;UserId, AppError&gt; (fun ctx ->
+///         match getAuthCookie ctx with
+///         | Some userId -> Ok userId
+///         | None -> Error AppError.Unauthorized)
+/// </code>
+/// </example>
+type PreconditionHandler<'Error> =
     {
-        /// <summary>The type this precondition matches (e.g., <c>typeof&lt;Pre&lt;UserId&gt;&gt;</c>).</summary>
+        /// <summary>The marker type this handler extracts (e.g., <c>typeof&lt;Pre&lt;UserId&gt;&gt;</c>).</summary>
         MatchType: Type
-        /// <summary>The extraction function that runs the precondition.</summary>
+        /// <summary>The function that extracts the value from HTTP context.</summary>
         Extract: HttpContext -> Result<obj, 'Error>
     }
 
@@ -150,7 +160,7 @@ module RouteHydration =
     /// let authPrecondition = RouteHydration.forPre&lt;UserId, AppError&gt; requireAuth
     /// </code>
     /// </example>
-    let forPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
+    let forPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : PreconditionHandler<'Error> =
         { MatchType = typeof<Pre<'T>>
           Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (Pre v)) }
 
@@ -168,7 +178,7 @@ module RouteHydration =
     /// let optAdminPrecondition = RouteHydration.forOptPre&lt;AdminId, AppError&gt; requireAdmin
     /// </code>
     /// </example>
-    let forOptPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : Precondition<'Error> =
+    let forOptPre<'T, 'Error> (pipeline: Pipeline<'T, 'Error>) : PreconditionHandler<'Error> =
         { MatchType = typeof<OptPre<'T>>
           Extract = fun ctx -> pipeline ctx |> Result.map (fun v -> box (OptPre v)) }
 
@@ -489,7 +499,7 @@ module RouteHydration =
             extractRequired extractors fieldName fieldType ctx
 
     /// Finds a precondition that matches the given type.
-    let private findPrecondition (preconditions: Precondition<'Error> list) (fieldType: Type) =
+    let private findPrecondition (preconditions: PreconditionHandler<'Error> list) (fieldType: Type) =
         preconditions |> List.tryFind (fun p -> p.MatchType = fieldType)
 
     /// Creates a default value for a type, handling wrapper types recursively.
@@ -585,7 +595,7 @@ module RouteHydration =
     /// | Error errors -> failwith (String.concat "\n" errors)
     /// </code>
     /// </example>
-    let validatePreconditions<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
+    let validatePreconditions<'Route, 'Error> (preconditions: PreconditionHandler<'Error> list) : Result<unit, string list> =
         let requiredTypes = collectPreconditionTypes typeof<'Route>
         let registeredTypes = preconditions |> List.map (fun p -> p.MatchType)
 
@@ -618,7 +628,7 @@ module RouteHydration =
     ///     Assert.Equal(Ok (), result)
     /// </code>
     /// </example>
-    let validate<'Route, 'Error> (preconditions: Precondition<'Error> list) : Result<unit, string list> =
+    let validate<'Route, 'Error> (preconditions: PreconditionHandler<'Error> list) : Result<unit, string list> =
         let structureErrors =
             match RouteReflection.validateStructure<'Route> () with
             | Ok() -> []
@@ -669,7 +679,7 @@ module RouteHydration =
     /// </code>
     /// </example>
     let create<'Route, 'Error>
-        (preconditions: Precondition<'Error> list)
+        (preconditions: PreconditionHandler<'Error> list)
         (extractors: TypeExtractor list)
         (makeError: string -> 'Error)
         (combineErrors: 'Error list -> 'Error)
