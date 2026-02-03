@@ -55,10 +55,6 @@ type PublishMode =
     | GitHubActions // Push tag to trigger CI/CD
     | LocalPublish // Publish to NuGet directly
 
-type ConfirmMode =
-    | Interactive // Prompt for confirmation
-    | AutoYes // Skip prompts, assume yes
-
 type ReleaseState =
     | FirstRelease
     | HasPreviousRelease of tag: string * currentVersion: Version
@@ -435,18 +431,11 @@ module Project =
 // ============================================================================
 
 module UI =
-    let mutable confirmMode = Interactive
-
     let promptYesNo message =
-        match confirmMode with
-        | AutoYes ->
-            printfn "%s [y/N] y (--yes)" message
-            true
-        | Interactive ->
-            printf "%s [y/N] " message
-            match Console.ReadLine() with
-            | null -> false
-            | s -> s.ToLower() = "y"
+        printf "%s [y/N] " message
+        match Console.ReadLine() with
+        | null -> false
+        | s -> s.ToLower() = "y"
 
     let printApiChanges =
         function
@@ -487,7 +476,6 @@ module UI =
         printfn ""
         printfn "Options:"
         printfn "  --publish  - publish to NuGet locally instead of pushing to GitHub"
-        printfn "  --yes, -y  - skip confirmation prompts (for CI/scripts)"
         printfn ""
         printfn "For --publish, set NUGET_API_KEY environment variable:"
         printfn "  1. Get key from https://www.nuget.org/account/apikeys"
@@ -511,16 +499,11 @@ let parseCommand =
 
 let parseArgs (argv: string array) : ReleaseCommand * PublishMode =
     let args = argv |> Array.toList
-
     let hasPublish = args |> List.contains "--publish"
-    let hasYes = args |> List.exists (fun a -> a = "--yes" || a = "-y")
-
-    // Set the global confirm mode
-    if hasYes then UI.confirmMode <- AutoYes
 
     let cmdArgs =
         args
-        |> List.filter (fun a -> a <> "--publish" && a <> "--yes" && a <> "-y")
+        |> List.filter (fun a -> a <> "--publish")
         |> List.tryHead
         |> Option.defaultValue ""
 
