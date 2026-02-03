@@ -43,6 +43,11 @@ description = "Check per-file coverage meets minimum threshold (50%)"
 run = "dotnet fsi scripts/check-coverage.fsx"
 depends = ["test"]
 
+[tasks.check-api]
+description = "Check API changes since last release"
+run = "dotnet fsi scripts/check-api.fsx"
+depends = ["build"]
+
 [tasks.sync-docs]
 description = "Sync README.md content to docs/index.md"
 run = "dotnet fsi scripts/sync-docs.fsx"

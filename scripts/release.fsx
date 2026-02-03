@@ -7,7 +7,6 @@ open System
 open System.Diagnostics
 open System.IO
 open System.Text.RegularExpressions
-open System.Reflection
 
 // ============================================================================
 // Configuration
@@ -184,65 +183,37 @@ module Version =
 // ============================================================================
 
 module Api =
-    let private extractFromAssembly (dllPath: string) : ApiSignature list =
-        try
-            let assembly = Assembly.LoadFrom(dllPath)
+    let private extractApiScript = "scripts/extract-api.fsx"
 
-            assembly.GetExportedTypes()
-            |> Array.collect (fun t ->
-                let typeSig = sprintf "type %s" t.FullName
-
-                let memberSigs =
-                    t.GetMembers(
-                        BindingFlags.Public
-                        ||| BindingFlags.Instance
-                        ||| BindingFlags.Static
-                        ||| BindingFlags.DeclaredOnly
-                    )
-                    |> Array.choose (fun m ->
-                        match m with
-                        | :? MethodInfo as mi when not mi.IsSpecialName ->
-                            let params' =
-                                mi.GetParameters()
-                                |> Array.map (fun p -> p.ParameterType.Name)
-                                |> String.concat ", "
-
-                            Some(sprintf "  %s(%s): %s" mi.Name params' mi.ReturnType.Name)
-                        | :? PropertyInfo as pi -> Some(sprintf "  %s: %s" pi.Name pi.PropertyType.Name)
-                        | :? FieldInfo as fi when fi.IsPublic -> Some(sprintf "  %s: %s" fi.Name fi.FieldType.Name)
-                        | :? ConstructorInfo as ci ->
-                            let params' =
-                                ci.GetParameters()
-                                |> Array.map (fun p -> p.ParameterType.Name)
-                                |> String.concat ", "
-
-                            Some(sprintf "  .ctor(%s)" params')
-                        | _ -> None)
-
-                Array.append [| typeSig |] memberSigs)
+    /// Run API extraction in a subprocess to avoid assembly loading conflicts
+    let private extractFromDll (dllPath: string) : ApiSignature list =
+        match Shell.run "dotnet" (sprintf "fsi %s %s" extractApiScript dllPath) with
+        | Success output ->
+            output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             |> Array.map ApiSignature
             |> Array.toList
-            |> List.sort
-        with _ ->
+        | Failure error ->
+            printfn "Warning: Failed to extract API from %s: %s" dllPath error
             []
 
     let extractCurrent () : ApiSignature list =
         Shell.runOrFail "dotnet" "build -c Release --verbosity quiet" |> ignore
-        extractFromAssembly (Path.GetFullPath dllPath)
+        extractFromDll (Path.GetFullPath dllPath)
 
     let extractFromTag (tag: string) : ApiSignature list =
         // Use a temp directory to checkout the tag without affecting working copy
         let tempDir = Path.Combine(Path.GetTempPath(), sprintf "falco-api-check-%s" (Guid.NewGuid().ToString("N").[..7]))
 
         try
-            // Clone the repo at the specific tag into temp dir
-            Shell.runOrFail "git" (sprintf "clone --depth 1 --branch %s . %s" tag tempDir) |> ignore
+            // Clone the repo at the specific tag into temp dir (use file:// for proper --depth support)
+            let repoPath = Directory.GetCurrentDirectory()
+            Shell.runOrFail "git" (sprintf "clone --depth 1 --branch %s file://%s %s" tag repoPath tempDir) |> ignore
 
             // Build in the temp directory
             Shell.runOrFail "dotnet" (sprintf "build %s/src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj -c Release --verbosity quiet" tempDir) |> ignore
 
             let tempDllPath = Path.Combine(tempDir, "src/Falco.UnionRoutes/bin/Release/net10.0/Falco.UnionRoutes.dll")
-            let api = extractFromAssembly tempDllPath
+            let api = extractFromDll tempDllPath
 
             // Cleanup
             Directory.Delete(tempDir, true)
