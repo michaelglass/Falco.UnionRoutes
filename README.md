@@ -109,16 +109,17 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `Posts of PostRoute`                 | `/posts/...`       | nested DU → path prefix  |
 | `[<Route(Path = "")>] Api of ApiRoute` | `/...`           | path-less group          |
 
-**Special case names:**
+**RESTful case names (no case name prefix in path):**
 
 | Case Name | Method | Path | Notes                          |
 |-----------|--------|------|--------------------------------|
 | `Root`    | GET    | `/`  | empty path                     |
 | `List`    | GET    | `/`  | empty path                     |
 | `Create`  | POST   | `/`  | empty path, POST method        |
-| `Delete`  | DELETE | —    | DELETE method (path from args) |
-| `Patch`   | PATCH  | —    | PATCH method (path from args)  |
-| `Show`    | GET    | —    | param-only path (no case name prefix) |
+| `Show`    | GET    | `/{params}` | param-only path           |
+| `Edit`    | GET    | `/{params}` | param-only path           |
+| `Delete`  | DELETE | `/{params}` | DELETE method             |
+| `Patch`   | PATCH  | `/{params}` | PATCH method              |
 
 **Override with attributes:**
 

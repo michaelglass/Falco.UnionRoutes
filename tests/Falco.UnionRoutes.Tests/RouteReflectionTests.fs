@@ -629,3 +629,44 @@ let ``validateStructure catches multiple nested route unions`` () =
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route unions")) @>
     | Ok() -> failwith "Expected validation error for multiple nested unions"
+
+// =============================================================================
+// RESTful case names with nested routes tests
+// =============================================================================
+
+type NestedChildRoute =
+    | List
+    | Detail of id: Guid
+
+type ShowNestedRoute = | Show of NestedChildRoute
+
+type DeleteNestedRoute = | Delete of NestedChildRoute
+
+type EditNestedRoute = | Edit of NestedChildRoute
+
+[<Fact>]
+let ``Show of nested route passes through without prefix`` () =
+    let route = ShowNestedRoute.Show NestedChildRoute.List
+    let info = RouteReflection.routeInfo route
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``Show of nested route with params passes through`` () =
+    let route = ShowNestedRoute.Show(NestedChildRoute.Detail Guid.Empty)
+    let info = RouteReflection.routeInfo route
+    // Detail has params, so it gets /detail/{id}
+    test <@ info.Path = "/{id}" @>
+
+[<Fact>]
+let ``Delete of nested route passes through without prefix`` () =
+    let route = DeleteNestedRoute.Delete NestedChildRoute.List
+    let info = RouteReflection.routeInfo route
+    test <@ info.Path = "/" @>
+    // Method comes from leaf (List → GET), not parent
+    test <@ info.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``Edit of nested route passes through without prefix`` () =
+    let route = EditNestedRoute.Edit NestedChildRoute.List
+    let info = RouteReflection.routeInfo route
+    test <@ info.Path = "/" @>
