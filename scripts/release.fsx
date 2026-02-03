@@ -271,6 +271,15 @@ module Bump =
                 { NewVersion = Version.bumpPatch current
                   Reason = "PATCH (no API changes)" }
 
+    /// For alpha/beta: just bump the prerelease number, skip API comparison
+    let private bumpPreRelease (v: Version) (pre: PreRelease) : BumpResult =
+        { NewVersion = { v with Stage = PreRelease(Version.bumpPreRelease pre) }
+          Reason =
+            match pre with
+            | Alpha n -> sprintf "alpha.%d (API changes ignored in alpha)" (n + 1)
+            | Beta n -> sprintf "beta.%d (API changes ignored in beta)" (n + 1)
+            | RC n -> sprintf "rc.%d" (n + 1) }
+
     let forCommand (state: ReleaseState) (cmd: ReleaseCommand) : BumpResult option =
         match cmd, state with
         | ShowHelp, _ -> None
@@ -295,11 +304,14 @@ module Bump =
                 { NewVersion = Version.toStable v
                   Reason = "promoting to stable" }
         | Auto, FirstRelease -> None // Need explicit alpha command for first release
-        | Auto, HasPreviousRelease(tag, v) ->
-            let baseline = Api.extractFromTag tag
-            let current = Api.extractCurrent ()
-            let change = Api.compare baseline current
-            Some(fromApiChange v change)
+        | Auto, HasPreviousRelease(_, v) ->
+            match v.Stage with
+            // Alpha/beta: just bump prerelease number, no API comparison needed
+            | PreRelease(Alpha _ as pre)
+            | PreRelease(Beta _ as pre) -> Some(bumpPreRelease v pre)
+            // RC/stable: compare APIs to determine version bump
+            | PreRelease(RC _)
+            | Stable -> None // Signal that API comparison is needed
         | _, FirstRelease -> None // Can't promote if no previous release
 
 // ============================================================================
@@ -433,13 +445,13 @@ module UI =
     let showHelp () =
         printfn "Usage: mise run release [command] [--publish]"
         printfn ""
-        printfn "Automatic versioning based on API changes:"
-        printfn "  MAJOR  - breaking changes (removed/changed APIs)"
-        printfn "  MINOR  - new features (added APIs)"
-        printfn "  PATCH  - bug fixes (no API changes)"
+        printfn "Versioning:"
+        printfn "  alpha/beta  - just bump prerelease number (no API check)"
+        printfn "  rc/stable   - bump based on API changes:"
+        printfn "                MAJOR (breaking) / MINOR (additions) / PATCH (none)"
         printfn ""
         printfn "Commands:"
-        printfn "  (none)  - auto-detect API changes and bump accordingly"
+        printfn "  (none)  - auto-bump: alpha.N+1 or API-based for rc/stable"
         printfn "  alpha   - start first alpha or new alpha cycle"
         printfn "  beta    - promote to beta"
         printfn "  rc      - promote to release candidate"
@@ -509,21 +521,28 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
              | FirstRelease -> "(none)"
              | HasPreviousRelease(_, v) -> Version.format v)
 
-        // For Auto command, show what we're comparing
-        match cmd, state with
-        | Auto, HasPreviousRelease(tag, _) ->
-            printfn "\nComparing API against %s..." tag
-            let baseline = Api.extractFromTag tag
-            printfn "Building current version..."
-            let current = Api.extractCurrent ()
-            let change = Api.compare baseline current
-            UI.printApiChanges change
-        | Auto, FirstRelease -> ()
-        | _ ->
-            printfn "Building current version..."
-            Api.extractCurrent () |> ignore
+        // Try to get bump without API comparison first (works for alpha/beta and explicit commands)
+        let bump =
+            match Bump.forCommand state cmd with
+            | Some b -> Some b
+            | None ->
+                // API comparison needed (RC/stable Auto, or first release)
+                match cmd, state with
+                | Auto, HasPreviousRelease(tag, v) ->
+                    printfn "\nComparing API against %s..." tag
+                    let baseline = Api.extractFromTag tag
+                    printfn "Building current version..."
+                    let current = Api.extractCurrent ()
+                    let change = Api.compare baseline current
+                    UI.printApiChanges change
+                    Some(Bump.fromApiChange v change)
+                | Auto, FirstRelease -> None
+                | _ ->
+                    printfn "Building current version..."
+                    Api.extractCurrent () |> ignore
+                    None
 
-        match Bump.forCommand state cmd with
+        match bump with
         | None -> NeedsExplicitCommand "No previous releases. Use 'mise run release alpha' for first release."
         | Some bump ->
             let newTag = Version.toTag bump.NewVersion
