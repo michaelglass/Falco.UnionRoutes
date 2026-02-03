@@ -36,6 +36,9 @@ jobs:
       - name: Check formatting
         run: dotnet fantomas src/ tests/ examples/ --check
 
+      - name: Check docs sync
+        run: dotnet fsi scripts/sync-docs.fsx --check
+
       - name: Build
         run: dotnet build --no-restore
 
