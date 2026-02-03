@@ -43,9 +43,21 @@ description = "Check per-file coverage meets minimum threshold (50%)"
 run = "dotnet fsi scripts/check-coverage.fsx"
 depends = ["test"]
 
+[tasks.sync-docs]
+description = "Sync README.md content to docs/index.md"
+run = "dotnet fsi scripts/sync-docs.fsx"
+
+[tasks.sync-docs-check]
+description = "Check if docs/index.md is in sync with README.md"
+run = "dotnet fsi scripts/sync-docs.fsx --check"
+
+[tasks.check]
+description = "Run all checks with auto-fix (format, sync-docs, then verify)"
+depends = ["format", "sync-docs", "lint", "coverage-check", "docs", "example-build"]
+
 [tasks.ci]
-description = "Run all CI checks"
-depends = ["format-check", "lint", "coverage-check", "docs", "example-build"]
+description = "Run all CI checks (no auto-fix)"
+depends = ["format-check", "lint", "coverage-check", "sync-docs-check", "docs", "example-build"]
 
 [tasks.pack]
 description = "Create NuGet package"
