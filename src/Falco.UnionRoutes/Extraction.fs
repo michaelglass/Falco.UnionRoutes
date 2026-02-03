@@ -115,6 +115,48 @@ module Extraction =
     type OverridablePreCondition<'T> = OverridablePreCondition of 'T
 
     // =========================================================================
+    // Precondition Skip Attributes
+    // =========================================================================
+
+    /// <summary>Skip all <c>OverridablePreCondition&lt;'T&gt;</c> preconditions for this route case.</summary>
+    /// <remarks>
+    /// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
+    /// <para>When skipped, the handler should ignore the value with <c>_</c> pattern.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// type UserItemRoute =
+    ///     | List                                  // inherits parent OverridablePreCondition preconditions
+    ///     | [&lt;SkipAllPreconditions&gt;] Public       // skips all OverridablePreCondition, handler uses _ pattern
+    /// </code>
+    /// </example>
+    /// <seealso cref="T:Falco.UnionRoutes.SkipPreconditionAttribute"/>
+    [<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
+    type SkipAllPreconditionsAttribute() =
+        inherit Attribute()
+
+    /// <summary>Skip a specific <c>OverridablePreCondition&lt;'T&gt;</c> precondition type for this route case.</summary>
+    /// <remarks>
+    /// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
+    /// <para>Can be applied multiple times to skip multiple precondition types.</para>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// type AdminRoute =
+    ///     | Dashboard                                         // requires all
+    ///     | [&lt;SkipPrecondition(typeof&lt;AdminId&gt;)&gt;] Profile     // skips OverridablePreCondition&lt;AdminId&gt; only
+    /// </code>
+    /// </example>
+    /// <seealso cref="T:Falco.UnionRoutes.SkipAllPreconditionsAttribute"/>
+    [<AttributeUsage(AttributeTargets.Property, AllowMultiple = true)>]
+    type SkipPreconditionAttribute(preconditionType: Type) =
+        inherit Attribute()
+
+        /// <summary>Gets the inner type of the <c>OverridablePreCondition&lt;'T&gt;</c> to skip.</summary>
+        /// <value>The type to skip, e.g., <c>typeof&lt;AdminId&gt;</c> for <c>OverridablePreCondition&lt;AdminId&gt;</c>.</value>
+        member _.PreconditionType = preconditionType
+
+    // =========================================================================
     // Extractor Configuration Types
     // =========================================================================
 
