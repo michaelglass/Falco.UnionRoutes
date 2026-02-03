@@ -1,4 +1,4 @@
-module Falco.UnionRoutes.Tests.PipelineTests
+module Falco.UnionRoutes.Tests.ExtractionTests
 
 open System
 open Xunit
@@ -62,38 +62,38 @@ let ``requireSomeWith returns Error with lazy evaluation for None`` () =
     test <@ called @>
 
 // =============================================================================
-// Pipeline composition tests
+// Extractor composition tests
 // =============================================================================
 
 [<Fact>]
-let ``Pipeline composition with <&> combines results`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Ok 1
-    let p2: Pipeline<string, TestError> = fun _ -> Ok "hello"
+let ``Extractor composition with <&> combines results`` () =
+    let p1: Extractor<int, TestError> = fun _ -> Ok 1
+    let p2: Extractor<string, TestError> = fun _ -> Ok "hello"
     let combined = p1 <&> p2
     let ctx = createMockContext ()
     test <@ combined ctx = Ok(1, "hello") @>
 
 [<Fact>]
-let ``Pipeline composition short-circuits on first error`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
-    let p2: Pipeline<string, TestError> = fun _ -> Ok "hello"
+let ``Extractor composition short-circuits on first error`` () =
+    let p1: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
+    let p2: Extractor<string, TestError> = fun _ -> Ok "hello"
     let combined = p1 <&> p2
     let ctx = createMockContext ()
     test <@ combined ctx = Error NotAuthenticated @>
 
 [<Fact>]
-let ``Pipeline composition returns second error if first succeeds`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Ok 1
-    let p2: Pipeline<string, TestError> = fun _ -> Error(NotFound "not found")
+let ``Extractor composition returns second error if first succeeds`` () =
+    let p1: Extractor<int, TestError> = fun _ -> Ok 1
+    let p2: Extractor<string, TestError> = fun _ -> Error(NotFound "not found")
     let combined = p1 <&> p2
     let ctx = createMockContext ()
     test <@ combined ctx = Error(NotFound "not found") @>
 
 [<Fact>]
 let ``Triple composition works`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Ok 1
-    let p2: Pipeline<string, TestError> = fun _ -> Ok "two"
-    let p3: Pipeline<bool, TestError> = fun _ -> Ok true
+    let p1: Extractor<int, TestError> = fun _ -> Ok 1
+    let p2: Extractor<string, TestError> = fun _ -> Ok "two"
+    let p3: Extractor<bool, TestError> = fun _ -> Ok true
     let combined = p1 <&> p2 <&> p3
     let ctx = createMockContext ()
     test <@ combined ctx = Ok((1, "two"), true) @>
@@ -104,14 +104,14 @@ let ``Triple composition works`` () =
 
 [<Fact>]
 let ``map transforms successful result`` () =
-    let p: Pipeline<int, TestError> = fun _ -> Ok 5
+    let p: Extractor<int, TestError> = fun _ -> Ok 5
     let mapped = map (fun x -> x * 2) p
     let ctx = createMockContext ()
     test <@ mapped ctx = Ok 10 @>
 
 [<Fact>]
 let ``map preserves error`` () =
-    let p: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
+    let p: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
     let mapped = map (fun x -> x * 2) p
     let ctx = createMockContext ()
     test <@ mapped ctx = Error NotAuthenticated @>
@@ -122,18 +122,18 @@ let ``map preserves error`` () =
 
 [<Fact>]
 let ``bind chains pipelines`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Ok 5
-    let p2 (x: int) : Pipeline<string, TestError> = fun _ -> Ok $"value: {x}"
+    let p1: Extractor<int, TestError> = fun _ -> Ok 5
+    let p2 (x: int) : Extractor<string, TestError> = fun _ -> Ok $"value: {x}"
     let chained = bind p2 p1
     let ctx = createMockContext ()
     test <@ chained ctx = Ok "value: 5" @>
 
 [<Fact>]
 let ``bind short-circuits on error`` () =
-    let p1: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
+    let p1: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
     let mutable called = false
 
-    let p2 (x: int) : Pipeline<string, TestError> =
+    let p2 (x: int) : Extractor<string, TestError> =
         fun _ ->
             called <- true
             Ok $"value: {x}"
@@ -243,14 +243,14 @@ let ``requireRouteIntWith uses lazy error for invalid number`` () =
 
 [<Fact>]
 let ``ignoreResult converts success to unit`` () =
-    let p: Pipeline<int, TestError> = fun _ -> Ok 42
+    let p: Extractor<int, TestError> = fun _ -> Ok 42
     let ignored = ignoreResult p
     let ctx = createMockContext ()
     test <@ ignored ctx = Ok() @>
 
 [<Fact>]
 let ``ignoreResult preserves error`` () =
-    let p: Pipeline<int, TestError> = fun _ -> Error NotAuthenticated
+    let p: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
     let ignored = ignoreResult p
     let ctx = createMockContext ()
     test <@ ignored ctx = Error NotAuthenticated @>
@@ -261,7 +261,7 @@ let ``ignoreResult preserves error`` () =
 
 [<Fact>]
 let ``Real-world: auth + route param composition`` () =
-    let requireAuth: Pipeline<UserId, TestError> =
+    let requireAuth: Extractor<UserId, TestError> =
         fun ctx ->
             match ctx.Request.Headers.TryGetValue("X-User-Id") with
             | true, values ->
@@ -282,7 +282,7 @@ let ``Real-world: auth + route param composition`` () =
 
 [<Fact>]
 let ``Real-world: auth failure short-circuits`` () =
-    let requireAuth: Pipeline<UserId, TestError> = fun _ -> Error NotAuthenticated
+    let requireAuth: Extractor<UserId, TestError> = fun _ -> Error NotAuthenticated
     let requirePostId = requireRouteId "id" PostId (BadRequest "Invalid post ID")
     let combined = requireAuth <&> requirePostId
 

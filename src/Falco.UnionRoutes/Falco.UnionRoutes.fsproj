@@ -34,9 +34,8 @@
 
   <ItemGroup>
     <Compile Include="RouteAttributes.fs" />
-    <Compile Include="RouteReflection.fs" />
-    <Compile Include="Pipeline.fs" />
-    <Compile Include="RouteHydration.fs" />
+    <Compile Include="Extraction.fs" />
+    <Compile Include="Route.fs" />
   </ItemGroup>
 
   <ItemGroup>
