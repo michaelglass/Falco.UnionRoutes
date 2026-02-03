@@ -7,6 +7,78 @@ open Falco.Routing
 open Microsoft.AspNetCore.Http
 open Microsoft.FSharp.Reflection
 
+// =============================================================================
+// Route Attributes and Types
+// =============================================================================
+
+/// <summary>HTTP methods for route attributes.</summary>
+/// <remarks>Used with <see cref="T:Falco.UnionRoutes.RouteAttribute"/> to specify the HTTP method for a route case.</remarks>
+type RouteMethod =
+    /// <summary>HTTP GET method.</summary>
+    | Get = 0
+    /// <summary>HTTP POST method.</summary>
+    | Post = 1
+    /// <summary>HTTP PUT method.</summary>
+    | Put = 2
+    /// <summary>HTTP DELETE method.</summary>
+    | Delete = 3
+    /// <summary>HTTP PATCH method.</summary>
+    | Patch = 4
+    /// <summary>Matches any HTTP method.</summary>
+    | Any = 5
+
+/// <summary>HTTP method discriminated union for use in route handlers.</summary>
+[<RequireQualifiedAccess>]
+type HttpMethod =
+    /// <summary>HTTP GET method.</summary>
+    | Get
+    /// <summary>HTTP POST method.</summary>
+    | Post
+    /// <summary>HTTP PUT method.</summary>
+    | Put
+    /// <summary>HTTP DELETE method.</summary>
+    | Delete
+    /// <summary>HTTP PATCH method.</summary>
+    | Patch
+    /// <summary>Matches any HTTP method.</summary>
+    | Any
+
+/// <summary>Attribute to specify route metadata on union cases.</summary>
+/// <remarks>
+/// Use this attribute to override the default HTTP method or path for a route case.
+/// Convention-based routing works without attributes for common patterns.
+/// </remarks>
+/// <example>
+/// <code>
+/// type UserRoute =
+///     | [&lt;Route(RouteMethod.Get, Path = "users")&gt;] List
+///     | [&lt;Route(RouteMethod.Get, Path = "users/{id}")&gt;] Detail of id: Guid
+///     | [&lt;Route(RouteMethod.Post, Path = "users")&gt;] Create
+/// </code>
+/// </example>
+[<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
+type RouteAttribute(method: RouteMethod) =
+    inherit Attribute()
+
+    /// <summary>Creates a RouteAttribute with GET as the default method.</summary>
+    new() = RouteAttribute(RouteMethod.Get)
+
+    /// <summary>Gets the HTTP method for this route.</summary>
+    /// <returns>The HTTP method specified for this route case.</returns>
+    member _.Method = method
+
+    /// <summary>Gets or sets the path pattern for this route segment.</summary>
+    /// <value>
+    /// The path pattern string. Use <c>""</c> for wrapper cases that just nest other routes,
+    /// or explicit paths like <c>"users"</c> or <c>"users/{id}"</c>.
+    /// Path parameters use <c>{paramName}</c> syntax.
+    /// </value>
+    member val Path: string = null with get, set
+
+// =============================================================================
+// Route Module
+// =============================================================================
+
 /// <summary>Type-safe routing with discriminated unions.</summary>
 /// <remarks>
 /// <para>The Route module provides functions for:</para>

@@ -33,7 +33,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="RouteAttributes.fs" />
     <Compile Include="Extraction.fs" />
     <Compile Include="Route.fs" />
   </ItemGroup>
