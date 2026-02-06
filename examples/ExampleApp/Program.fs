@@ -199,72 +199,32 @@ let requireAdmin: Extractor<AdminId, AppError> =
         | false, _ -> Error Forbidden
 
 // =============================================================================
-// 6b. Route Hydration
+// 6b. Endpoint Configuration
 // =============================================================================
-// Route.extractor automatically extracts fields based on their types:
-// - PreCondition<'T> fields use matching preconditions (auth errors preserve their type)
-// - Guid, string, int, int64, bool fields are extracted from route params
-// - Wrapper types (single-case DUs like PostId) are auto-detected
-// - QueryParam<'T> fields extract from query string
-// - Custom extractors can handle domain-specific types like Slug
-// - All errors are accumulated and combined via combineErrors function
-
-/// Convert extraction error string to AppError
-let makeError (msg: string) = BadRequest msg
-
-/// Combine multiple errors - preserves structure for pattern matching
-let combineErrors (errors: AppError list) =
-    match errors with
-    | [ single ] -> single // Single error preserved as-is
-    | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
-
-/// Create auth precondition for PreCondition<UserId>
-/// The result is automatically wrapped in PreCondition when extracted
-let authPrecondition () =
-    Extractor.precondition<UserId, AppError> requireAuth
-
-/// Create admin precondition for PreCondition<AdminId>
-let adminPrecondition () =
-    Extractor.precondition<AdminId, AppError> requireAdmin
-
-/// Create SKIPPABLE admin precondition for OptionalPreCondition<AdminId>
-/// Child routes can skip this with [<SkipAllPreconditions>] or [<SkipPrecondition(typeof<AdminId>)>]
-let optAdminPrecondition () =
-    Extractor.overridablePrecondition<AdminId, AppError> requireAdmin
-
-/// Hydrate PostRoute - extracts auth and route params automatically
-let hydratePost: PostRoute -> Extractor<PostRoute, AppError> =
-    Route.extractor<PostRoute, AppError> [ authPrecondition () ] [] makeError combineErrors
-
-/// Hydrate UserRoute - no preconditions needed, just extracts route params
-let hydrateUser: UserRoute -> Extractor<UserRoute, AppError> =
-    Route.extractor<UserRoute, AppError> [] [] makeError combineErrors
+// Route.endpoints takes a config record that bundles all extraction settings:
+// - Preconditions for auth/validation (PreCondition<'T> and OverridablePreCondition<'T>)
+// - Custom parsers for domain types (like Slug)
+// - Error handling functions
+//
+// Hydration is RECURSIVE - nested route unions are automatically hydrated!
 
 /// Custom parser for Slug type - demonstrates extensibility
 let slugParser: Parser<Slug> = fun s -> Ok(Slug s)
 
-/// Hydrate ApiRoute - uses custom parser for Slug type
-let hydrateApi: ApiRoute -> Extractor<ApiRoute, AppError> =
-    Route.extractor<ApiRoute, AppError> [] [ Extractor.parser slugParser ] makeError combineErrors
-
-/// Hydrate AdminRoute - uses BOTH user and admin preconditions
-/// Routes can require multiple different precondition types
-let hydrateAdmin: AdminRoute -> Extractor<AdminRoute, AppError> =
-    Route.extractor<AdminRoute, AppError>
-        [ adminPrecondition (); authPrecondition () ] // Both extractors available
-        []
-        makeError
-        combineErrors
-
-/// Hydrate InternalApiRoute - admin auth only
-/// Demonstrates single-case routes with only PreCondition<'T> fields
-let hydrateInternal: InternalApiRoute -> Extractor<InternalApiRoute, AppError> =
-    Route.extractor<InternalApiRoute, AppError> [ adminPrecondition () ] [] makeError combineErrors
-
-/// Hydrate UserWithParamsRoute - demonstrates nested routes with params and OptionalPreCondition<'T>
-/// The OptionalPreCondition<AdminId> can be skipped by child routes using [<SkipAllPreconditions>]
-let hydrateUserWithParams: UserWithParamsRoute -> Extractor<UserWithParamsRoute, AppError> =
-    Route.extractor<UserWithParamsRoute, AppError> [ optAdminPrecondition () ] [] makeError combineErrors
+/// Endpoint configuration - bundles all extraction settings in one place
+let endpointConfig: EndpointConfig<AppError> =
+    { Preconditions =
+        [ Extractor.precondition<UserId, AppError> requireAuth
+          Extractor.precondition<AdminId, AppError> requireAdmin
+          Extractor.overridablePrecondition<AdminId, AppError> requireAdmin ]
+      Parsers = [ Extractor.parser slugParser ]
+      MakeError = fun msg -> BadRequest msg
+      CombineErrors =
+        fun errors ->
+            match errors with
+            | [ single ] -> single
+            | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
+      ToErrorResponse = toErrorResponse }
 
 // =============================================================================
 // 7. Handlers
@@ -411,9 +371,9 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                     Elem.code [] [ Text.raw (uid.ToString()) ] ]
               Elem.p
                   []
-                  [ Text.raw "This handler used "
-                    Elem.code [] [ Text.raw "requireAuth <&> requirePostId" ]
-                    Text.raw " to compose two pipelines." ]
+                  [ Text.raw "Auth and route params are extracted automatically via "
+                    Elem.code [] [ Text.raw "Route.endpoints" ]
+                    Text.raw "." ]
               Elem.a [ Attr.href "/posts" ] [ Text.raw "View posts" ] ]
 
     let getProfile (userId: UserId) : HttpHandler =
@@ -683,10 +643,10 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
 // =============================================================================
-// 8. Post Handler (using hydration)
+// 8. Route Handlers (routes are already hydrated by top-level extractor)
 // =============================================================================
-// The route is automatically hydrated - all fields are populated.
-// Handler just pattern matches and uses the values directly.
+// With recursive hydration, all nested routes are hydrated at the top level.
+// Handlers just pattern match on already-hydrated values - no per-route hydration needed!
 
 let handlePost (route: PostRoute) : HttpHandler =
     match route with
@@ -697,42 +657,17 @@ let handlePost (route: PostRoute) : HttpHandler =
     | PostRoute.Patch(PreCondition userId, postId) -> Handlers.patchPost (userId, postId)
     | PostRoute.Search query -> Handlers.searchPosts query
 
-/// Combined: hydrate then handle
-let postHandler (route: PostRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydratePost route) handlePost
-
-// =============================================================================
-// 8b. User Handler (using hydration)
-// =============================================================================
-
 let handleUser (route: UserRoute) : HttpHandler =
     match route with
     | UserRoute.Profile userId -> Handlers.getProfile userId
     | UserRoute.Update userId -> Handlers.updateUser userId
     | UserRoute.Me -> Handlers.currentUser
 
-/// Combined: hydrate then handle
-let userHandler (route: UserRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydrateUser route) handleUser
-
-// =============================================================================
-// 8c. Api Handler (using hydration with custom extractor)
-// =============================================================================
-
 let handleApi (route: ApiRoute) : HttpHandler =
     match route with
     | ApiRoute.Webhook -> Handlers.webhook
     | ApiRoute.Status -> Handlers.apiStatus
     | ApiRoute.Article slug -> Handlers.article slug
-
-/// Combined: hydrate then handle (uses custom Slug extractor)
-let apiHandler (route: ApiRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydrateApi route) handleApi
-
-// =============================================================================
-// 8d. Admin Handler (using hydration with MULTIPLE preconditions)
-// =============================================================================
-// Demonstrates routes that require different combinations of preconditions
 
 let handleAdmin (route: AdminRoute) : HttpHandler =
     match route with
@@ -742,32 +677,13 @@ let handleAdmin (route: AdminRoute) : HttpHandler =
     | AdminRoute.BanUser(PreCondition adminId, PreCondition userId, targetId) ->
         Handlers.banUser (adminId, userId, targetId)
 
-/// Combined: hydrate then handle (uses both admin and user preconditions)
-let adminHandler (route: AdminRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydrateAdmin route) handleAdmin
-
-// =============================================================================
-// 8e. Internal API Handler (path-less group with PreCondition<'T>-only routes)
-// =============================================================================
-// Demonstrates single-case routes where the only field is PreCondition<'T>
-// These should NOT be treated as wrapper types (fixed in issue #1 follow-up)
-
 let handleInternal (route: InternalApiRoute) : HttpHandler =
     match route with
     | InternalApiRoute.Metrics(PreCondition adminId) -> Handlers.internalMetrics adminId
     | InternalApiRoute.DeepHealth(PreCondition adminId) -> Handlers.internalDeepHealth adminId
     | InternalApiRoute.ClearCache(PreCondition adminId) -> Handlers.internalClearCache adminId
 
-/// Combined: hydrate then handle
-let internalHandler (route: InternalApiRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydrateInternal route) handleInternal
-
-// =============================================================================
-// 8f. Nested User Handler (demonstrates nested routes with params + OptionalPreCondition)
-// =============================================================================
-// Shows how parent params are passed down to child handlers
-// and how OptionalPreCondition can be skipped by child routes
-
+// Nested user handlers - all routes are already hydrated, just dispatch
 let handleUserItem (userId: UserId) (adminIdOpt: AdminId option) (route: UserItemRoute) : HttpHandler =
     match route with
     | UserItemRoute.List -> Handlers.userItemList userId adminIdOpt
@@ -797,64 +713,36 @@ let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
 
         handleNestedUser userId adminIdOpt nestedRoute
 
-/// Combined: hydrate then handle
-let userWithParamsHandler (route: UserWithParamsRoute) : HttpHandler =
-    Extraction.run toErrorResponse (hydrateUserWithParams route) handleUserWithParams
-
 // =============================================================================
-// 9. Top-level Route Handler
+// 9. Top-level Route Handler with Single Hydration Point
 // =============================================================================
+// Handle already-hydrated routes - dispatches to nested handlers
 
-let routeHandler (route: Route) : HttpHandler =
+let handleRoute (route: Route) : HttpHandler =
     match route with
     | Route.Root -> Handlers.home
     | Route.Health -> Handlers.health
-
-    // PostRoute uses hydration (with auth)
-    | Route.Posts postRoute -> postHandler postRoute
-
-    // UserRoute uses hydration (no auth, just route params)
-    | Route.Users userRoute -> userHandler userRoute
-
-    // ApiRoute uses hydration with custom Slug extractor
-    | Route.Api apiRoute -> apiHandler apiRoute
-
-    // AdminRoute uses hydration with MULTIPLE preconditions (admin + user)
-    | Route.Admin adminRoute -> adminHandler adminRoute
-
-    // InternalApiRoute - path-less group (Path = "") with PreCondition<'T>-only routes
-    | Route.Internal internalRoute -> internalHandler internalRoute
-
-    // UserWithParamsRoute - demonstrates nested routes with params and OverridablePreCondition<'T>
-    | Route.UserWithParams userWithParamsRoute -> userWithParamsHandler userWithParamsRoute
+    | Route.Posts postRoute -> handlePost postRoute
+    | Route.Users userRoute -> handleUser userRoute
+    | Route.Api apiRoute -> handleApi apiRoute
+    | Route.Admin adminRoute -> handleAdmin adminRoute
+    | Route.Internal internalRoute -> handleInternal internalRoute
+    | Route.UserWithParams userWithParamsRoute -> handleUserWithParams userWithParamsRoute
 
 // =============================================================================
-// 10. Validate Routes at Startup
+// 10. Convert to Falco Endpoints
 // =============================================================================
-// Validate that all preconditions are registered before starting the app.
-// This catches configuration errors early (at startup, not at request time).
-// Route.endpoints also validates route structure automatically.
+// Route.endpoints does everything:
+// - Validates route structure at startup
+// - Extracts route/query params automatically
+// - Runs precondition extractors (auth, validation)
+// - Hydrates nested routes recursively
+// - Converts errors to HTTP responses
 
-let allPreconditions =
-    [ authPrecondition (); adminPrecondition (); optAdminPrecondition () ]
-
-// Validate precondition coverage - fails fast if any PreCondition<T>/OverridablePreCondition<T> is missing
-do
-    match Route.validatePreconditions<Route, AppError> allPreconditions with
-    | Ok() -> ()
-    | Error errors ->
-        let errorMsg = errors |> String.concat "\n  - "
-        failwith $"Route precondition validation failed:\n  - {errorMsg}"
+let endpoints = Route.endpoints endpointConfig handleRoute
 
 // =============================================================================
-// 11. Convert to Falco Endpoints
-// =============================================================================
-// Note: endpoints automatically validates route structure (paths, field names, etc.)
-
-let endpoints = Route.endpoints routeHandler
-
-// =============================================================================
-// 12. Application Entry Point
+// 11. Application Entry Point
 // =============================================================================
 
 [<EntryPoint>]

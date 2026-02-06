@@ -338,7 +338,14 @@ let ``endpoints generates HttpEndpoint list from handler`` () =
     let handler (_route: SimpleRoute) : Falco.HttpHandler =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
-    let endpoints = Route.endpoints handler
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = []
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 2 @>
 
 // =============================================================================
