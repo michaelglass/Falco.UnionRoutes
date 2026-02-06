@@ -5,9 +5,9 @@ Define your routes as F# discriminated unions. Get exhaustive pattern matching, 
 
 ```fsharp
 type PostRoute =
-    | List of page: QueryParam<int> option
-    | Detail of id: PostId
-    | Create of PreCondition<UserId>
+    | List of page: QueryParam<int> option    // GET /posts?page=1
+    | Detail of id: PostId                    // GET /posts/{id}
+    | Create of PreCondition<UserId>          // POST /posts
 
 let handlePost route : HttpHandler =
     match route with
@@ -67,13 +67,13 @@ type PostId = PostId of Guid
 ```fsharp
 // 1. Define routes
 type Route =
-    | Home
-    | Posts of PostRoute
+    | Home                                    // GET /home
+    | Posts of PostRoute                      // /posts/...
 
 type PostRoute =
-    | List of page: QueryParam<int> option
-    | Detail of id: PostId
-    | Create of PreCondition<UserId>
+    | List of page: QueryParam<int> option    // GET /posts?page=1
+    | Detail of id: PostId                    // GET /posts/{id}
+    | Create of PreCondition<UserId>          // POST /posts
 
 // 2. Configure extraction (preconditions, parsers, error handling)
 let config: EndpointConfig<AppError> = {
@@ -147,8 +147,8 @@ Use `Path = ""` to group routes without adding a path segment:
 
 ```fsharp
 type InternalRoute =
-    | Metrics of PreCondition<AdminId>                         // GET /metrics (convention)
-    | [<Route(Path = "health-deep")>] DeepHealth of PreCondition<AdminId>  // custom path
+    | Metrics of PreCondition<AdminId>                         // GET /metrics
+    | [<Route(Path = "health-deep")>] DeepHealth of PreCondition<AdminId>  // GET /health-deep
 
 type Route =
     | Public of PublicRoute
