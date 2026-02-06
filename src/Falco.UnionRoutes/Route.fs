@@ -96,13 +96,15 @@ type RouteAttribute(method: RouteMethod) =
 ///     | Show of id: Guid
 ///     | Create of PreCondition&lt;UserId&gt;
 ///
-/// let hydrate = Route.extractor&lt;PostRoute, AppError&gt;
-///     [ Extractor.precondition authExtractor ]
-///     []
-///     makeError
-///     combineErrors
+/// let config: EndpointConfig&lt;AppError&gt; = {
+///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; authExtractor ]
+///     Parsers = []
+///     MakeError = fun msg -> BadRequest msg
+///     CombineErrors = List.head
+///     ToErrorResponse = fun e -> Response.ofPlainText (string e)
+/// }
 ///
-/// let endpoints = Route.endpoints handleRoute
+/// let endpoints = Route.endpoints config handleRoute
 /// </code>
 /// </example>
 [<RequireQualifiedAccess>]
@@ -644,34 +646,6 @@ module Route =
         | HttpMethod.Patch -> patch
         | HttpMethod.Any -> any
 
-    /// <summary>Generates Falco endpoints from a route handler function.</summary>
-    /// <typeparam name="TRoute">The route union type.</typeparam>
-    /// <param name="routeHandler">A function that takes a route value and returns an HTTP handler.</param>
-    /// <returns>A list of Falco <c>HttpEndpoint</c> values ready for use with <c>app.UseFalco</c>.</returns>
-    /// <example>
-    /// <code>
-    /// let routeHandler route =
-    ///     match route with
-    ///     | Home -> Response.ofPlainText "home"
-    ///     | Posts p -> postHandler p
-    ///
-    /// let endpoints = Route.endpoints routeHandler
-    /// app.UseFalco(endpoints) |> ignore
-    /// </code>
-    /// </example>
-    let endpoints (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
-        match validateStructure<'TRoute> () with
-        | Error errors ->
-            let errorMsg = errors |> String.concat "\n  - "
-            failwith $"Route validation failed:\n  - {errorMsg}"
-        | Ok() -> ()
-
-        allRoutes<'TRoute> ()
-        |> List.map (fun route ->
-            let routeInfo = info route
-            let handler = routeHandler route
-            toFalcoMethod routeInfo.Method routeInfo.Path handler)
-
     // =========================================================================
     // Hydration - Internal helpers
     // =========================================================================
@@ -1072,82 +1046,147 @@ module Route =
     // Public API - Hydration
     // =========================================================================
 
-    /// <summary>Creates an extraction function that populates route fields from HTTP context.</summary>
-    /// <typeparam name="Route">The route union type.</typeparam>
-    /// <typeparam name="E">The error type for the application.</typeparam>
-    /// <param name="preconditions">Extractors for <see cref="T:Falco.UnionRoutes.PreCondition`1"/> and
-    /// <see cref="T:Falco.UnionRoutes.OverridablePreCondition`1"/> fields. Create with
-    /// <see cref="M:Falco.UnionRoutes.Extractor.precondition``2"/> or
-    /// <see cref="M:Falco.UnionRoutes.Extractor.overridablePrecondition``2"/>.</param>
-    /// <param name="parsers">Parsers for custom types in route/query params. Create with
-    /// <see cref="M:Falco.UnionRoutes.Extractor.parser``1"/>.</param>
-    /// <param name="makeError">Converts parsing error strings to the error type.</param>
-    /// <param name="combineErrors">Combines multiple errors into one (for error accumulation).</param>
-    /// <returns>A function that takes a route value and returns an <see cref="T:Falco.UnionRoutes.Extractor`2"/>
-    /// that populates its fields from <see cref="T:Microsoft.AspNetCore.Http.HttpContext"/>.</returns>
-    /// <example>
-    /// <code>
-    /// let hydrate: PostRoute -> Extractor&lt;PostRoute, AppError&gt; =
-    ///     Route.extractor&lt;PostRoute, AppError&gt;
-    ///         [ Extractor.precondition authExtractor ]
-    ///         [ Extractor.parser slugParser ]
-    ///         makeError
-    ///         combineErrors
-    /// </code>
-    /// </example>
-    let extractor<'Route, 'E>
+    /// Recursive hydration helper that works with obj types for reflection-based traversal.
+    /// Returns Result<obj, 'E> where the obj is the hydrated route value.
+    let rec private hydrateValue<'E>
+        (preconditions: PreconditionExtractor<'E> list)
+        (parsers: FieldParser list)
+        (makeError: string -> 'E)
+        (combineErrors: 'E list -> 'E)
+        (leafCaseInfo: UnionCaseInfo)
+        (value: obj)
+        (ctx: HttpContext)
+        : Result<obj, 'E> =
+
+        let valueType = value.GetType()
+
+        if not (FSharpType.IsUnion(valueType)) then
+            Ok value
+        else
+            let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+            let fields = caseInfo.GetFields()
+
+            if fields.Length = 0 then
+                Ok value
+            else
+                let fieldResults =
+                    fields
+                    |> Array.mapi (fun i field ->
+                        if isNestedRouteUnion field.PropertyType then
+                            // Recursively hydrate nested route unions
+                            match
+                                hydrateValue
+                                    preconditions
+                                    parsers
+                                    makeError
+                                    combineErrors
+                                    leafCaseInfo
+                                    fieldValues.[i]
+                                    ctx
+                            with
+                            | Ok hydratedNested -> FromExtraction(Ok hydratedNested)
+                            | Error e -> FromPrecondition(Error e) // Use FromPrecondition to pass through 'E directly
+                        elif
+                            tryGetOptPreInfo field.PropertyType
+                            |> Option.exists (fun innerType -> shouldSkipOptPrecondition leafCaseInfo innerType)
+                        then
+                            FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
+                        else
+                            match findPrecondition preconditions field.PropertyType with
+                            | Some precondition -> FromPrecondition(precondition.Extract ctx)
+                            | None -> FromExtraction(extractField parsers field.Name field.PropertyType ctx))
+
+                let allErrors =
+                    fieldResults
+                    |> Array.choose (function
+                        | FromPrecondition(Error e) -> Some e
+                        | FromExtraction(Error e) -> Some(makeError e)
+                        | FromPrecondition(Ok _) -> None
+                        | FromExtraction(Ok _) -> None)
+                    |> Array.toList
+
+                if allErrors.Length > 0 then
+                    Error(combineErrors allErrors)
+                else
+                    let values =
+                        fieldResults
+                        |> Array.map (function
+                            | FromPrecondition(Ok v) -> v
+                            | FromExtraction(Ok v) -> v
+                            | FromPrecondition(Error _) -> failwith "unreachable"
+                            | FromExtraction(Error _) -> failwith "unreachable")
+
+                    let hydrated = FSharpValue.MakeUnion(caseInfo, values)
+                    Ok hydrated
+
+    /// Creates an extraction function that populates route fields from HTTP context.
+    /// Internal - used by Route.endpoints. Hydration is recursive.
+    let internal extractor<'Route, 'E>
         (preconditions: PreconditionExtractor<'E> list)
         (parsers: FieldParser list)
         (makeError: string -> 'E)
         (combineErrors: 'E list -> 'E)
         : 'Route -> Extractor<'Route, 'E> =
 
-        let routeType = typeof<'Route>
+        let hydrateRoute route ctx =
+            let leafCaseInfo = findLeafCaseInfo (box route)
 
-        fun (route: 'Route) ->
-            fun (ctx: HttpContext) ->
-                let caseInfo, fieldValues = FSharpValue.GetUnionFields(route, routeType)
-                let fields = caseInfo.GetFields()
+            match hydrateValue preconditions parsers makeError combineErrors leafCaseInfo (box route) ctx with
+            | Ok hydratedObj -> Ok(hydratedObj :?> 'Route)
+            | Error e -> Error e
 
-                if fields.Length = 0 then
-                    Ok route
-                else
-                    let leafCaseInfo = findLeafCaseInfo (box route)
+        fun route -> hydrateRoute route
 
-                    let fieldResults =
-                        fields
-                        |> Array.mapi (fun i field ->
-                            if isNestedRouteUnion field.PropertyType then
-                                FromExtraction(Ok(fieldValues.[i]))
-                            elif
-                                tryGetOptPreInfo field.PropertyType
-                                |> Option.exists (fun innerType -> shouldSkipOptPrecondition leafCaseInfo innerType)
-                            then
-                                FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
-                            else
-                                match findPrecondition preconditions field.PropertyType with
-                                | Some precondition -> FromPrecondition(precondition.Extract ctx)
-                                | None -> FromExtraction(extractField parsers field.Name field.PropertyType ctx))
+    // =========================================================================
+    // Public API - Falco Integration
+    // =========================================================================
 
-                    let allErrors =
-                        fieldResults
-                        |> Array.choose (function
-                            | FromPrecondition(Error e) -> Some e
-                            | FromExtraction(Error e) -> Some(makeError e)
-                            | FromPrecondition(Ok _) -> None
-                            | FromExtraction(Ok _) -> None)
-                        |> Array.toList
+    /// <summary>Generates Falco endpoints with automatic route extraction.</summary>
+    /// <typeparam name="TRoute">The route union type.</typeparam>
+    /// <typeparam name="E">The error type for extraction failures.</typeparam>
+    /// <param name="config">Configuration for extraction (preconditions, parsers, error handling).</param>
+    /// <param name="routeHandler">A function that takes a hydrated route value and returns an HTTP handler.</param>
+    /// <returns>A list of Falco <c>HttpEndpoint</c> values ready for use with <c>app.UseFalco</c>.</returns>
+    /// <remarks>
+    /// <para>This is the main entry point for Falco.UnionRoutes. It:</para>
+    /// <list type="bullet">
+    ///   <item><description>Validates route structure at startup</description></item>
+    ///   <item><description>Extracts route/query parameters automatically</description></item>
+    ///   <item><description>Runs precondition extractors (auth, validation)</description></item>
+    ///   <item><description>Hydrates nested routes recursively</description></item>
+    /// </list>
+    /// </remarks>
+    /// <example>
+    /// <code>
+    /// let config: EndpointConfig&lt;AppError&gt; = {
+    ///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; requireAuth ]
+    ///     Parsers = []
+    ///     MakeError = fun msg -> BadRequest msg
+    ///     CombineErrors = fun errors -> errors |> List.head
+    ///     ToErrorResponse = fun e -> Response.withStatusCode 400 >> Response.ofPlainText (string e)
+    /// }
+    ///
+    /// let handleRoute route =
+    ///     match route with
+    ///     | Home -> Response.ofPlainText "home"
+    ///     | Posts p -> handlePost p
+    ///
+    /// let endpoints = Route.endpoints config handleRoute
+    /// app.UseFalco(endpoints) |> ignore
+    /// </code>
+    /// </example>
+    let endpoints<'TRoute, 'E> (config: EndpointConfig<'E>) (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
+        match validateStructure<'TRoute> () with
+        | Error errors ->
+            let errorMsg = errors |> String.concat "\n  - "
+            failwith $"Route validation failed:\n  - {errorMsg}"
+        | Ok() -> ()
 
-                    if allErrors.Length > 0 then
-                        Error(combineErrors allErrors)
-                    else
-                        let values =
-                            fieldResults
-                            |> Array.map (function
-                                | FromPrecondition(Ok v) -> v
-                                | FromExtraction(Ok v) -> v
-                                | FromPrecondition(Error _) -> failwith "unreachable"
-                                | FromExtraction(Error _) -> failwith "unreachable")
+        let hydrate =
+            extractor<'TRoute, 'E> config.Preconditions config.Parsers config.MakeError config.CombineErrors
 
-                        let hydrated = FSharpValue.MakeUnion(caseInfo, values) :?> 'Route
-                        Ok hydrated
+        allRoutes<'TRoute> ()
+        |> List.map (fun route ->
+            let routeInfo = info route
+            let handler = Extraction.run config.ToErrorResponse (hydrate route) routeHandler
+            toFalcoMethod routeInfo.Method routeInfo.Path handler)

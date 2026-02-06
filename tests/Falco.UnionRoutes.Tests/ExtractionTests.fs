@@ -4,6 +4,7 @@ open System
 open Xunit
 open Swensen.Unquote
 open Falco.UnionRoutes
+open Falco.UnionRoutes.Tests.TestHelpers
 open Microsoft.AspNetCore.Http
 
 // =============================================================================
@@ -97,69 +98,6 @@ let ``Triple composition works`` () =
     let combined = p1 <&> p2 <&> p3
     let ctx = createMockContext ()
     test <@ combined ctx = Ok((1, "two"), true) @>
-
-// =============================================================================
-// Pipeline.map tests
-// =============================================================================
-
-[<Fact>]
-let ``map transforms successful result`` () =
-    let p: Extractor<int, TestError> = fun _ -> Ok 5
-    let mapped = map (fun x -> x * 2) p
-    let ctx = createMockContext ()
-    test <@ mapped ctx = Ok 10 @>
-
-[<Fact>]
-let ``map preserves error`` () =
-    let p: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
-    let mapped = map (fun x -> x * 2) p
-    let ctx = createMockContext ()
-    test <@ mapped ctx = Error NotAuthenticated @>
-
-// =============================================================================
-// Pipeline.bind tests
-// =============================================================================
-
-[<Fact>]
-let ``bind chains pipelines`` () =
-    let p1: Extractor<int, TestError> = fun _ -> Ok 5
-    let p2 (x: int) : Extractor<string, TestError> = fun _ -> Ok $"value: {x}"
-    let chained = bind p2 p1
-    let ctx = createMockContext ()
-    test <@ chained ctx = Ok "value: 5" @>
-
-[<Fact>]
-let ``bind short-circuits on error`` () =
-    let p1: Extractor<int, TestError> = fun _ -> Error NotAuthenticated
-    let mutable called = false
-
-    let p2 (x: int) : Extractor<string, TestError> =
-        fun _ ->
-            called <- true
-            Ok $"value: {x}"
-
-    let chained = bind p2 p1
-    let ctx = createMockContext ()
-    chained ctx |> ignore
-    test <@ not called @>
-
-// =============================================================================
-// Pipeline.succeed and Pipeline.fail tests
-// =============================================================================
-
-[<Fact>]
-let ``succeed always returns Ok`` () =
-    let p = succeed 42
-    let ctx = createMockContext ()
-    let result: Result<int, TestError> = p ctx
-    test <@ result = Ok 42 @>
-
-[<Fact>]
-let ``fail always returns Error`` () =
-    let p = fail NotAuthenticated
-    let ctx = createMockContext ()
-    let result: Result<int, TestError> = p ctx
-    test <@ result = Error NotAuthenticated @>
 
 // =============================================================================
 // Route parameter extraction tests

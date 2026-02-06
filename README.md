@@ -75,26 +75,29 @@ type PostRoute =
     | Detail of id: PostId
     | Create of PreCondition<UserId>
 
-// 2. Create extractor (extracts params + runs auth)
-let authPrecondition = Extractor.precondition<UserId, AppError> requireAuth
-let hydratePost = Route.extractor<PostRoute, AppError>
-    [authPrecondition] [] makeError combineErrors
+// 2. Configure extraction (preconditions, parsers, error handling)
+let config: EndpointConfig<AppError> = {
+    Preconditions = [ Extractor.precondition<UserId, AppError> requireAuth ]
+    Parsers = []
+    MakeError = fun msg -> BadRequest msg
+    CombineErrors = fun errors -> errors |> List.head
+    ToErrorResponse = fun e -> Response.withStatusCode 400 >> Response.ofPlainText (string e)
+}
 
-// 3. Handle routes (compiler ensures exhaustive)
+// 3. Handle routes (compiler ensures exhaustive, routes already hydrated)
 let handlePost route : HttpHandler =
     match route with
     | List page -> Response.ofJson (getPosts page)
     | Detail postId -> Response.ofJson (getPost postId)
     | Create (PreCondition userId) -> Response.ofJson (createPost userId)
 
-// 4. Wire up
-let postHandler route = Extraction.run toErrorResponse (hydratePost route) handlePost
-let routeHandler route =
+let handleRoute route : HttpHandler =
     match route with
     | Home -> Response.ofPlainText "home"
-    | Posts p -> postHandler p
+    | Posts p -> handlePost p
 
-let endpoints = Route.endpoints routeHandler
+// 4. Generate endpoints - extraction happens automatically
+let endpoints = Route.endpoints config handleRoute
 ```
 <!-- sync:basicusage:end -->
 
@@ -269,22 +272,24 @@ let ``all routes are valid`` () =
 
 ```fsharp
 // Route module
-Route.endpoints handler              // Generate Falco endpoints (validates structure)
+Route.endpoints config handler       // Generate endpoints with extraction (main entry point)
 Route.link route                     // Type-safe URL: "/posts/abc-123"
 Route.allRoutes<Route>()             // Enumerate all routes
 Route.validateStructure<Route>()     // Validate route structure only
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
 Route.validate<Route, Error> preconditions               // Full validation (for tests)
-Route.extractor [preconditions] [parsers] makeError combineErrors  // Create extraction function
 
-// Extractor module
-Extractor.precondition<UserId, Error> extractor           // For PreCondition<UserId> fields
-Extractor.overridablePrecondition<AdminId, Error> extractor  // For OverridablePreCondition<AdminId> fields
-Extractor.parser<Slug> parser                             // For custom types in route/query params
+// EndpointConfig record (passed to Route.endpoints)
+{ Preconditions = [...]              // Auth/validation extractors
+  Parsers = [...]                    // Custom type parsers
+  MakeError = fun msg -> ...         // String -> error type
+  CombineErrors = fun errors -> ...  // Combine multiple errors
+  ToErrorResponse = fun e -> ... }   // Error -> HTTP response
 
-// Extraction module
-Extraction.run toError extractor handler    // Execute with error handling
-extractor1 <&> extractor2                   // Combine extractors
+// Extractor module - create extractors for EndpointConfig
+Extractor.precondition<UserId, Error> extractFn           // For PreCondition<UserId> fields
+Extractor.overridablePrecondition<AdminId, Error> extractFn  // For OverridablePreCondition<AdminId>
+Extractor.parser<Slug> parseFn                            // For custom types in route/query params
 ```
 <!-- sync:keyfunctions:end -->
 
