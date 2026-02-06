@@ -804,6 +804,7 @@ module Route =
             None
 
     let private getRouteString (ctx: HttpContext) (fieldName: string) : string =
+        // TODO: go back to GetString when https://github.com/falcoframework/Falco/pull/150 gets released
         match ctx.Request.RouteValues.TryGetValue(fieldName) with
         | true, value when not (isNull value) -> value.ToString()
         | true, _nullValue -> ""
