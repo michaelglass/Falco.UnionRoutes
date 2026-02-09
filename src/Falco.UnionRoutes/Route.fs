@@ -320,6 +320,13 @@ module Route =
     /// <typeparam name="T">The route union type.</typeparam>
     /// <param name="route">The route value to inspect.</param>
     /// <returns>A <see cref="T:Falco.UnionRoutes.RouteInfo"/> with method and path.</returns>
+    /// <example>
+    /// <code>
+    /// let routeInfo = Route.info (Posts (Detail (PostId Guid.Empty)))
+    /// // routeInfo.Method = HttpMethod.Get
+    /// // routeInfo.Path = "/posts/{id}"
+    /// </code>
+    /// </example>
     let info (route: 'T) : RouteInfo =
         let (method, segments) = extractRouteInfo (box route)
 
@@ -596,7 +603,7 @@ module Route =
 
                 caseErrors @ nestedErrors)
 
-    /// <summary>Validates route structure including paths, field types, and constraints.</summary>
+    /// <summary>Validates route structure including paths and field-to-parameter consistency.</summary>
     /// <typeparam name="Route">The route union type to validate.</typeparam>
     /// <returns><c>Ok ()</c> if valid, <c>Error</c> with list of issues if invalid.</returns>
     /// <example>

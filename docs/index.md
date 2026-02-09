@@ -234,30 +234,7 @@ type UserRoute =
 <!-- sync:validation -->
 ### Route Validation
 
-Validate routes at startup to catch configuration errors early (not at request time).
-
-**At app startup:**
-
-```fsharp
-// Collect all preconditions
-let allPreconditions =
-    [ Extractor.precondition<UserId, AppError> requireAuth
-      Extractor.precondition<AdminId, AppError> requireAdmin
-      Extractor.overridablePrecondition<AdminId, AppError> requireAdmin ]
-
-// Validate precondition coverage - fails fast if any precondition type is missing
-do
-    match Route.validatePreconditions<Route, AppError> allPreconditions with
-    | Ok () -> ()
-    | Error errors ->
-        let errorMsg = errors |> String.concat "\n  - "
-        failwith $"Route precondition validation failed:\n  - {errorMsg}"
-
-// endpoints also validates route structure (paths, field names, etc.) automatically
-let endpoints = Route.endpoints routeHandler
-```
-
-**In tests (recommended):**
+`Route.endpoints` automatically validates route structure (paths, field names, etc.) at startup. To also check precondition coverage, add a test:
 
 ```fsharp
 [<Fact>]
@@ -281,8 +258,8 @@ let ``all routes are valid`` () =
 | Duplicate path params | `endpoints` (automatic) |
 | Path params match field names | `endpoints` (automatic) |
 | Multiple nested route unions | `endpoints` (automatic) |
-| All `PreCondition<T>` have extractors | `validatePreconditions` (manual) |
-| All `OverridablePreCondition<T>` have extractors | `validatePreconditions` (manual) |
+| All `PreCondition<T>` have extractors | `validate` / `validatePreconditions` |
+| All `OverridablePreCondition<T>` have extractors | `validate` / `validatePreconditions` |
 <!-- sync:validation:end -->
 
 <!-- sync:keyfunctions -->

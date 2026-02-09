@@ -248,11 +248,11 @@ module Extraction =
             /// Parsers for custom types in route/query parameters.
             /// Create with Extractor.parser. Built-in types are handled automatically.
             Parsers: FieldParser list
-            /// Converts parsing error strings to the error type.
+            /// Converts a route/query parsing error message (string) into your error type.
             MakeError: string -> 'E
-            /// Combines multiple errors into one (for error accumulation).
+            /// Reduces multiple field errors into one when more than one field fails.
             CombineErrors: 'E list -> 'E
-            /// Converts an error to an HTTP error response.
+            /// Converts the final error into an HTTP response sent to the client.
             ToErrorResponse: 'E -> HttpHandler
         }
 
