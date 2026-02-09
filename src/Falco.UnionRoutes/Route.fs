@@ -615,6 +615,129 @@ module Route =
         if errors.IsEmpty then Ok() else Error errors
 
     // =========================================================================
+    // Cross-route uniqueness and ambiguity detection
+    // =========================================================================
+
+    /// A parsed path segment: either a literal string or a parameter placeholder.
+    type private PathSegment =
+        | Literal of string
+        | Parameter
+
+    /// Parse a route path template into typed segments.
+    let private parsePathSegments (path: string) : PathSegment list =
+        path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        |> Array.toList
+        |> List.map (fun seg -> if seg.Contains("{") then Parameter else Literal seg)
+
+    /// Check if two parsed segment lists could match the same URL.
+    let private routesOverlap (a: PathSegment list) (b: PathSegment list) : bool =
+        a.Length = b.Length
+        && List.forall2
+            (fun sa sb ->
+                match sa, sb with
+                | Literal la, Literal lb -> la = lb
+                | _ -> true)
+            a
+            b
+
+    /// Check if route A is strictly more specific than route B.
+    /// A is more specific when it has a literal wherever B has a literal,
+    /// plus at least one position where A has a literal and B has a parameter.
+    let private isMoreSpecific (a: PathSegment list) (b: PathSegment list) : bool =
+        if a.Length <> b.Length then
+            false
+        else
+            let pairs = List.zip a b
+
+            let aHasLiteralWhereBHasParam =
+                pairs
+                |> List.exists (function
+                    | Literal _, Parameter -> true
+                    | _ -> false)
+
+            let aHasParamWhereBHasLiteral =
+                pairs
+                |> List.exists (function
+                    | Parameter, Literal _ -> true
+                    | _ -> false)
+
+            aHasLiteralWhereBHasParam && not aHasParamWhereBHasLiteral
+
+    /// Recursively extract a qualified case path for error messages (e.g., "Posts.Detail").
+    let rec private getRouteCasePath (value: obj) : string =
+        let valueType = value.GetType()
+        let case, fields = FSharpValue.GetUnionFields(value, valueType)
+
+        let nestedField =
+            case.GetFields()
+            |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+
+        match nestedField with
+        | Some idx -> $"{case.Name}.{getRouteCasePath fields.[idx]}"
+        | None -> case.Name
+
+    /// Check if two parsed segment lists are structurally identical (param names ignored).
+    let private areDuplicateSegments (a: PathSegment list) (b: PathSegment list) : bool =
+        a.Length = b.Length
+        && List.forall2
+            (fun sa sb ->
+                match sa, sb with
+                | Literal la, Literal lb -> la = lb
+                | Parameter, Parameter -> true
+                | _ -> false)
+            a
+            b
+
+    /// Validate cross-route uniqueness and detect ambiguity.
+    let private validateCrossRouteUniqueness (routeType: Type) : string list =
+        let allValues = enumerateUnionValues routeType
+
+        let routeData =
+            allValues
+            |> List.map (fun value ->
+                let (method, segments) = extractRouteInfo value
+
+                let path =
+                    if segments.IsEmpty then
+                        "/"
+                    else
+                        "/" + String.concat "/" segments
+
+                let parsed = parsePathSegments path
+                let casePath = getRouteCasePath value
+                (method, path, parsed, casePath))
+
+        let grouped = routeData |> List.groupBy (fun (method, _, _, _) -> method)
+
+        grouped
+        |> List.collect (fun (_method, routes) ->
+            [ for i in 0 .. routes.Length - 2 do
+                  for j in i + 1 .. routes.Length - 1 do
+                      let (methodA, pathA, parsedA, caseA) = routes.[i]
+                      let (_methodB, pathB, parsedB, caseB) = routes.[j]
+
+                      if routesOverlap parsedA parsedB then
+                          if areDuplicateSegments parsedA parsedB then
+                              $"Duplicate route: '{caseA}' and '{caseB}' both resolve to {methodA} {pathA}"
+                          elif not (isMoreSpecific parsedA parsedB) && not (isMoreSpecific parsedB parsedA) then
+                              $"Ambiguous routes: '{caseA}' ({methodA} {pathA}) and '{caseB}' ({methodA} {pathB}) overlap with no clear specificity winner" ])
+
+    /// <summary>Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.</summary>
+    /// <typeparam name="Route">The route union type to validate.</typeparam>
+    /// <returns><c>Ok ()</c> if all routes are unique and unambiguous, <c>Error</c> with list of issues if not.</returns>
+    /// <example>
+    /// <code>
+    /// match Route.validateUniqueness&lt;Route&gt;() with
+    /// | Ok () -> printfn "No duplicate or ambiguous routes"
+    /// | Error errors -> errors |> List.iter (printfn "Error: %s")
+    /// </code>
+    /// </example>
+    let validateUniqueness<'Route> () : Result<unit, string list> =
+        let errors = validateCrossRouteUniqueness typeof<'Route>
+
+        if errors.IsEmpty then Ok() else Error errors
+
+    // =========================================================================
     // Public API - Falco Integration
     // =========================================================================
 
@@ -989,12 +1112,17 @@ module Route =
             | Ok() -> []
             | Error errors -> errors
 
+        let uniquenessErrors =
+            match validateUniqueness<'Route> () with
+            | Ok() -> []
+            | Error errors -> errors
+
         let preconditionErrors =
             match validatePreconditions<'Route, 'E> preconditions with
             | Ok() -> []
             | Error errors -> errors
 
-        let allErrors = structureErrors @ preconditionErrors
+        let allErrors = structureErrors @ uniquenessErrors @ preconditionErrors
 
         if allErrors.IsEmpty then Ok() else Error allErrors
 
@@ -1132,11 +1260,21 @@ module Route =
     /// </code>
     /// </example>
     let endpoints<'TRoute, 'E> (config: EndpointConfig<'E>) (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
-        match validateStructure<'TRoute> () with
-        | Error errors ->
-            let errorMsg = errors |> String.concat "\n  - "
+        let structureErrors =
+            match validateStructure<'TRoute> () with
+            | Ok() -> []
+            | Error errors -> errors
+
+        let uniquenessErrors =
+            match validateUniqueness<'TRoute> () with
+            | Ok() -> []
+            | Error errors -> errors
+
+        let allErrors = structureErrors @ uniquenessErrors
+
+        if not allErrors.IsEmpty then
+            let errorMsg = allErrors |> String.concat "\n  - "
             failwith $"Route validation failed:\n  - {errorMsg}"
-        | Ok() -> ()
 
         let hydrate =
             extractor<'TRoute, 'E> config.Preconditions config.Parsers config.MakeError config.CombineErrors
@@ -1145,4 +1283,12 @@ module Route =
         |> List.map (fun route ->
             let routeInfo = info route
             let handler = Extraction.run config.ToErrorResponse (hydrate route) routeHandler
-            toFalcoMethod routeInfo.Method routeInfo.Path handler)
+            let sortKey = parsePathSegments routeInfo.Path
+            (sortKey, routeInfo.Path, toFalcoMethod routeInfo.Method routeInfo.Path handler))
+        |> List.sortBy (fun (sortKey, path, _) ->
+            (sortKey
+             |> List.map (function
+                 | Literal _ -> 0
+                 | Parameter -> 1),
+             path))
+        |> List.map (fun (_, _, endpoint) -> endpoint)
