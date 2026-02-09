@@ -11,10 +11,8 @@
 open System
 open Falco
 open Falco.Markup
-open Falco.Routing
 open Falco.UnionRoutes
 open Microsoft.AspNetCore.Builder
-open Microsoft.AspNetCore.Http
 
 // =============================================================================
 // 1. Domain Types
@@ -73,27 +71,34 @@ type AdminRoute =
         id: Guid // DELETE method + custom path
 
 // =============================================================================
-// Nested routes with params example - /users/{userId}/items/{itemId}
+// Nested RESTful routes example - /user-with-params/{userId}/...
 // =============================================================================
-// Demonstrates parent params + child routes pattern
+// Demonstrates the RESTful nested route pattern:
+// - "Show" convention: parent case with id + nested route, no case-name prefix
+// - "Edit" convention: fieldless Edit produces /edit path segment
+// - OverridablePreCondition + SkipPrecondition for selective auth
 
 type ItemId = ItemId of Guid
 
 type UserItemRoute =
-    | List // GET /nested-user/{userId}/items - inherits OptionalPreCondition<AdminId>
-    | Show of itemId: ItemId // GET /nested-user/{userId}/items/{itemId} - "Show" convention (no /show prefix)
+    | List // GET /user-with-params/{userId}/items - inherits OverridablePreCondition<AdminId>
+    | Show of itemId: ItemId // GET /user-with-params/{userId}/items/{itemId}
     | [<SkipAllPreconditions>] Public // skips ALL optional preconditions
-    | [<SkipPrecondition(typeof<AdminId>)>] Limited // skips only OptionalPreCondition<AdminId>
+    | [<SkipPrecondition(typeof<AdminId>)>] Limited // skips only OverridablePreCondition<AdminId>
 
 type UserDashboardRoute =
-    | Overview // GET /users/{userId}/dashboard
-    | Settings // GET /users/{userId}/dashboard/settings
+    | Overview // GET /user-with-params/{userId}/dashboard
+    | Settings // GET /user-with-params/{userId}/dashboard/settings
 
 type NestedUserRoute =
     | Items of UserItemRoute
     | Dashboard of UserDashboardRoute
+    | Edit // GET /user-with-params/{userId}/edit - "Edit" produces /edit path segment
 
-type UserWithParamsRoute = NestedUser of userId: UserId * OverridablePreCondition<AdminId> * NestedUserRoute // Parent param + skippable precondition
+// "Show" produces no case-name prefix, just {userId} - so child routes nest under /{userId}/...
+type UserWithParamsRoute =
+    | List // GET /user-with-params
+    | Show of userId: UserId * OverridablePreCondition<AdminId> * NestedUserRoute // /user-with-params/{userId}/...
 
 // Path-less group example - groups routes without adding a path segment
 // The empty Path = "" on Route means these routes appear at root level (no /internal prefix)
@@ -238,6 +243,7 @@ module Handlers =
         path
             .Replace("{id}", sampleId.ToString())
             .Replace("{userId}", sampleId.ToString())
+            .Replace("{itemId}", sampleId.ToString())
             .Replace("{slug}", "hello-world")
 
     /// Render a single route as an HTML list item
@@ -544,7 +550,9 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                   [ Elem.strong [] [ Text.raw "User ID: " ]
                     Elem.code [] [ Text.raw (uid.ToString()) ] ]
               Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
-              Elem.p [] [ Text.raw "This demonstrates nested routes with parent params: /nested-user/{userId}/items" ]
+              Elem.p
+                  []
+                  [ Text.raw "This demonstrates nested routes with parent params: /user-with-params/{userId}/items" ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
     let userItemDetail (userId: UserId) (itemId: ItemId) (adminId: AdminId option) : HttpHandler =
@@ -568,7 +576,7 @@ curl -X DELETE http://localhost:5000/admin/users/{sampleId} \
                   [ Elem.strong [] [ Text.raw "Item ID: " ]
                     Elem.code [] [ Text.raw (iid.ToString()) ] ]
               Elem.p [] [ Elem.strong [] [ Text.raw "Admin ID: " ]; Elem.code [] [ Text.raw adminStr ] ]
-              Elem.p [] [ Text.raw "This demonstrates /nested-user/{userId}/items/{itemId}" ]
+              Elem.p [] [ Text.raw "This demonstrates /user-with-params/{userId}/items/{itemId}" ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
     let userItemPublic (userId: UserId) : HttpHandler =
@@ -700,10 +708,32 @@ let handleNestedUser (userId: UserId) (adminIdOpt: AdminId option) (route: Neste
     match route with
     | NestedUserRoute.Items itemRoute -> handleUserItem userId adminIdOpt itemRoute
     | NestedUserRoute.Dashboard dashRoute -> handleUserDashboard userId adminIdOpt dashRoute
+    | NestedUserRoute.Edit ->
+        let (UserId uid) = userId
+
+        htmlResponse
+            "Edit User"
+            [ Elem.h1 [] [ Text.raw "Edit User" ]
+              Elem.p
+                  []
+                  [ Elem.strong [] [ Text.raw "User ID: " ]
+                    Elem.code [] [ Text.raw (uid.ToString()) ] ]
+              Elem.p
+                  []
+                  [ Text.raw "This route uses the "
+                    Elem.code [] [ Text.raw "Edit" ]
+                    Text.raw " convention - fieldless Edit produces /edit path segment." ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
 
 let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
     match route with
-    | UserWithParamsRoute.NestedUser(userId, OverridablePreCondition adminId, nestedRoute) ->
+    | UserWithParamsRoute.List ->
+        htmlResponse
+            "User List"
+            [ Elem.h1 [] [ Text.raw "User List (Nested)" ]
+              Elem.p [] [ Text.raw "This is the list view at /user-with-params" ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+    | UserWithParamsRoute.Show(userId, OverridablePreCondition adminId, nestedRoute) ->
         // Convert sentinel Guid.Empty to None, actual values to Some
         // (Skipped OverridablePreCondition uses default value, which for AdminId is AdminId(Guid.Empty))
         let adminIdOpt =
