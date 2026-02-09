@@ -178,6 +178,18 @@ module Version =
           Patch = 0
           Stage = Stable }
 
+    /// Returns a tuple suitable for descending sort with proper SemVer precedence:
+    /// alpha < beta < rc < stable, then by prerelease number within each stage.
+    let sortKey (v: Version) =
+        let stageOrder, stageNum =
+            match v.Stage with
+            | PreRelease(Alpha n) -> 0, n
+            | PreRelease(Beta n) -> 1, n
+            | PreRelease(RC n) -> 2, n
+            | Stable -> 3, 0
+
+        (v.Major, v.Minor, v.Patch, stageOrder, stageNum)
+
 // ============================================================================
 // API Extraction and Comparison
 // ============================================================================
@@ -332,8 +344,12 @@ module VCS =
         | Failure _ -> false
 
     let getLatestTag () =
-        match Shell.run "git" "tag -l v* --sort=-v:refname" with
-        | Success output when output <> "" -> Some(output.Split('\n').[0])
+        match Shell.run "git" "tag -l v*" with
+        | Success output when output <> "" ->
+            output.Split('\n')
+            |> Array.filter (fun t -> t.StartsWith("v"))
+            |> Array.sortByDescending (fun t -> Version.sortKey (Version.parse t))
+            |> Array.tryHead
         | _ -> None
 
     let getReleaseState () : ReleaseState =
