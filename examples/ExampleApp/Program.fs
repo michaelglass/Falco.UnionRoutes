@@ -1,3 +1,5 @@
+// Run with: mise run example
+
 open System
 open ExampleApp
 open Falco

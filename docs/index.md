@@ -103,7 +103,7 @@ let endpoints = Route.endpoints config handleRoute
 
 ## Reference
 
-See the [Example App](https://github.com/michaelglass/Falco.UnionRoutes/tree/main/examples/ExampleApp) for a complete working example.
+See the [Example App](https://github.com/michaelglass/Falco.UnionRoutes/tree/main/examples/ExampleApp) for a complete working example. Run it with `mise run example`.
 
 <!-- sync:conventions -->
 ### Route Conventions
