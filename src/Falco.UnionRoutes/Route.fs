@@ -722,17 +722,8 @@ module Route =
                           elif not (isMoreSpecific parsedA parsedB) && not (isMoreSpecific parsedB parsedA) then
                               $"Ambiguous routes: '{caseA}' ({methodA} {pathA}) and '{caseB}' ({methodA} {pathB}) overlap with no clear specificity winner" ])
 
-    /// <summary>Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.</summary>
-    /// <typeparam name="Route">The route union type to validate.</typeparam>
-    /// <returns><c>Ok ()</c> if all routes are unique and unambiguous, <c>Error</c> with list of issues if not.</returns>
-    /// <example>
-    /// <code>
-    /// match Route.validateUniqueness&lt;Route&gt;() with
-    /// | Ok () -> printfn "No duplicate or ambiguous routes"
-    /// | Error errors -> errors |> List.iter (printfn "Error: %s")
-    /// </code>
-    /// </example>
-    let validateUniqueness<'Route> () : Result<unit, string list> =
+    /// Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.
+    let internal validateUniqueness<'Route> () : Result<unit, string list> =
         let errors = validateCrossRouteUniqueness typeof<'Route>
 
         if errors.IsEmpty then Ok() else Error errors
