@@ -651,6 +651,8 @@ type DeleteNestedRoute = Delete of NestedChildRoute
 
 type EditNestedRoute = Edit of NestedChildRoute
 
+type MemberNestedRoute = Member of NestedChildRoute
+
 [<Fact>]
 let ``Show of nested route passes through without prefix`` () =
     let route = ShowNestedRoute.Show NestedChildRoute.List
@@ -678,22 +680,44 @@ let ``Edit of nested route adds edit prefix`` () =
     let info = Route.info route
     test <@ info.Path = "/edit" @>
 
+[<Fact>]
+let ``Member of nested route passes through without prefix`` () =
+    let route = MemberNestedRoute.Member NestedChildRoute.List
+    let info = Route.info route
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``Member of nested route with params passes through`` () =
+    let route = MemberNestedRoute.Member(NestedChildRoute.Detail Guid.Empty)
+    let info = Route.info route
+    test <@ info.Path = "/{id}" @>
+
 // =============================================================================
 // Nested RESTful route pattern tests
 // =============================================================================
 
-type EmailRoute =
+type PostDetailRoute =
+    | Show
+    | Edit
+    | Delete
+    | Patch
+
+type RestfulPostRoute =
     | List
     | Create
-    | Show of emailId: Guid
+    | Member of postId: Guid * PostDetailRoute
 
-type UserDetailRoute =
-    | Emails of EmailRoute
+type RestfulUserDetailRoute =
+    | Show
     | Edit
+    | Delete
+    | Patch
+    | Posts of RestfulPostRoute
 
 type RestfulUserRoute =
     | List
-    | Show of userId: Guid * UserDetailRoute
+    | Create
+    | Member of userId: Guid * RestfulUserDetailRoute
 
 [<Fact>]
 let ``RESTful nested routes - user list`` () =
@@ -702,51 +726,111 @@ let ``RESTful nested routes - user list`` () =
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
-let ``RESTful nested routes - list emails`` () =
-    let route =
-        RestfulUserRoute.Show(Guid.Empty, UserDetailRoute.Emails EmailRoute.List)
-
-    let info = Route.info route
-    test <@ info.Path = "/{userId}/emails" @>
-    test <@ info.Method = HttpMethod.Get @>
-
-[<Fact>]
-let ``RESTful nested routes - create email`` () =
-    let route =
-        RestfulUserRoute.Show(Guid.Empty, UserDetailRoute.Emails EmailRoute.Create)
-
-    let info = Route.info route
-    test <@ info.Path = "/{userId}/emails" @>
+let ``RESTful nested routes - create user`` () =
+    let info = Route.info RestfulUserRoute.Create
+    test <@ info.Path = "/" @>
     test <@ info.Method = HttpMethod.Post @>
 
 [<Fact>]
-let ``RESTful nested routes - show email`` () =
-    let route =
-        RestfulUserRoute.Show(Guid.Empty, UserDetailRoute.Emails(EmailRoute.Show Guid.Empty))
-
+let ``RESTful nested routes - show user`` () =
+    let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Show)
     let info = Route.info route
-    test <@ info.Path = "/{userId}/emails/{emailId}" @>
+    test <@ info.Path = "/{userId}" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
 let ``RESTful nested routes - edit user`` () =
-    let route = RestfulUserRoute.Show(Guid.Empty, UserDetailRoute.Edit)
+    let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Edit)
     let info = Route.info route
     test <@ info.Path = "/{userId}/edit" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
+let ``RESTful nested routes - delete user`` () =
+    let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Delete)
+    let info = Route.info route
+    test <@ info.Path = "/{userId}" @>
+    test <@ info.Method = HttpMethod.Delete @>
+
+[<Fact>]
+let ``RESTful nested routes - patch user`` () =
+    let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Patch)
+    let info = Route.info route
+    test <@ info.Path = "/{userId}" @>
+    test <@ info.Method = HttpMethod.Patch @>
+
+[<Fact>]
+let ``RESTful nested routes - list posts`` () =
+    let route =
+        RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Posts RestfulPostRoute.List)
+
+    let info = Route.info route
+    test <@ info.Path = "/{userId}/posts" @>
+    test <@ info.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``RESTful nested routes - create post`` () =
+    let route =
+        RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Posts RestfulPostRoute.Create)
+
+    let info = Route.info route
+    test <@ info.Path = "/{userId}/posts" @>
+    test <@ info.Method = HttpMethod.Post @>
+
+[<Fact>]
+let ``RESTful nested routes - show post`` () =
+    let route =
+        RestfulUserRoute.Member(
+            Guid.Empty,
+            RestfulUserDetailRoute.Posts(RestfulPostRoute.Member(Guid.Empty, PostDetailRoute.Show))
+        )
+
+    let info = Route.info route
+    test <@ info.Path = "/{userId}/posts/{postId}" @>
+    test <@ info.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``RESTful nested routes - edit post`` () =
+    let route =
+        RestfulUserRoute.Member(
+            Guid.Empty,
+            RestfulUserDetailRoute.Posts(RestfulPostRoute.Member(Guid.Empty, PostDetailRoute.Edit))
+        )
+
+    let info = Route.info route
+    test <@ info.Path = "/{userId}/posts/{postId}/edit" @>
+    test <@ info.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``RESTful nested routes - delete post`` () =
+    let route =
+        RestfulUserRoute.Member(
+            Guid.Empty,
+            RestfulUserDetailRoute.Posts(RestfulPostRoute.Member(Guid.Empty, PostDetailRoute.Delete))
+        )
+
+    let info = Route.info route
+    test <@ info.Path = "/{userId}/posts/{postId}" @>
+    test <@ info.Method = HttpMethod.Delete @>
+
+[<Fact>]
 let ``RESTful nested routes - enumerates all routes`` () =
     let routes = Route.allRoutes<RestfulUserRoute> ()
-    // List + (Show * (Emails * (List + Create + Show) + Edit)) = 1 + 3 + 1 = 5
-    test <@ List.length routes = 5 @>
+    // User: List + Create + Member * (Show + Edit + Delete + Patch + Posts * (List + Create + Member * (Show + Edit + Delete + Patch)))
+    // = 2 + (4 + (2 + 4)) = 12
+    test <@ List.length routes = 12 @>
 
 [<Fact>]
 let ``RESTful nested routes - link generation`` () =
     let userId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    let emailId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+    let postId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     let url =
-        Route.link (RestfulUserRoute.Show(userId, UserDetailRoute.Emails(EmailRoute.Show emailId)))
+        Route.link (
+            RestfulUserRoute.Member(
+                userId,
+                RestfulUserDetailRoute.Posts(RestfulPostRoute.Member(postId, PostDetailRoute.Edit))
+            )
+        )
 
-    test <@ url = "/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/emails/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" @>
+    test <@ url = "/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/posts/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/edit" @>
