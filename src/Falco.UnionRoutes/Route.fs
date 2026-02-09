@@ -206,6 +206,23 @@ module Route =
         || isQueryType f.PropertyType
         || isOptionalQueryType f.PropertyType
 
+    // =========================================================================
+    // Path and method inference
+    // =========================================================================
+
+    /// Does this case name produce an empty segment? RESTful names like
+    /// List, Show, Create etc. are "invisible" in the URL path.
+    let private isEmptySegmentName (caseName: string) : bool =
+        match caseName with
+        | "Root"
+        | "List"
+        | "Show"
+        | "Member"
+        | "Create"
+        | "Delete"
+        | "Patch" -> true
+        | _ -> false
+
     /// Infer path segment from case fields
     let private inferPathFromFields (case: UnionCaseInfo) : string option =
         let fields = case.GetFields()
@@ -226,20 +243,10 @@ module Route =
                 let paramPath =
                     pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
 
-                match case.Name, hasNestedUnion with
-                | "Show", _
-                | "Member", _
-                | "List", _
-                | "Delete", _
-                | "Patch", _
-                | "Edit", _
-                | "Create", _ -> Some paramPath
-                | _, true -> Some(toKebabCase case.Name + "/" + paramPath)
-                | _, false -> Some paramPath
-
-    /// Check if a case has any route path fields
-    let private hasRoutePathFields (case: UnionCaseInfo) : bool =
-        case.GetFields() |> Array.exists (fun f -> not (isNonRouteField f))
+                match isEmptySegmentName case.Name, hasNestedUnion with
+                | true, _ -> Some paramPath
+                | false, true -> Some(toKebabCase case.Name + "/" + paramPath)
+                | false, false -> Some paramPath
 
     /// Get path segment from a case
     let private getPathSegment (case: UnionCaseInfo) : string =
@@ -249,66 +256,52 @@ module Route =
             match inferPathFromFields case with
             | Some path -> path
             | None ->
-                match case.Name with
-                | "Root"
-                | "List"
-                | "Create"
-                | "Show"
-                | "Member"
-                | "Delete"
-                | "Patch" -> ""
-                | caseName -> toKebabCase caseName
+                if isEmptySegmentName case.Name then
+                    ""
+                else
+                    toKebabCase case.Name
 
     /// Get HTTP method from a case's RouteAttribute
-    let private getMethod (case: UnionCaseInfo) : HttpMethod option =
+    let private getMethod (case: UnionCaseInfo) : HttpMethod =
         match getRouteAttr case with
-        | Some attr -> Some(toHttpMethod attr.Method)
+        | Some attr -> toHttpMethod attr.Method
         | None ->
             match case.Name with
-            | "Create" -> Some HttpMethod.Post
-            | "Delete" -> Some HttpMethod.Delete
-            | "Patch" -> Some HttpMethod.Patch
-            | _otherCaseName -> Some HttpMethod.Get
+            | "Create" -> HttpMethod.Post
+            | "Delete" -> HttpMethod.Delete
+            | "Patch" -> HttpMethod.Patch
+            | _ -> HttpMethod.Get
 
     /// Recursively extract route info
     // fsharplint:disable-next-line FL0085
-    let rec private extractRouteInfo (value: obj) : HttpMethod option * string list =
+    let rec private extractRouteInfo (value: obj) : HttpMethod * string list =
         let valueType = value.GetType()
+        let case, fields = FSharpValue.GetUnionFields(value, valueType)
+        let segment = getPathSegment case
+        let method = getMethod case
 
-        if not (FSharpType.IsUnion(valueType)) then
-            (None, [])
-        else
-            let case, fields = FSharpValue.GetUnionFields(value, valueType)
-            let segment = getPathSegment case
-            let method = getMethod case
+        let nestedUnionField =
+            case.GetFields() |> Array.tryFind (fun f -> isNestedRouteUnion f.PropertyType)
 
-            let nestedUnionField =
-                case.GetFields() |> Array.tryFind (fun f -> isNestedRouteUnion f.PropertyType)
+        match nestedUnionField with
+        | Some fieldInfo ->
+            let fieldIndex =
+                case.GetFields() |> Array.findIndex (fun f -> f.Name = fieldInfo.Name)
 
-            match nestedUnionField with
-            | Some fieldInfo ->
-                let fieldIndex =
-                    case.GetFields() |> Array.findIndex (fun f -> f.Name = fieldInfo.Name)
+            let nestedValue = fields.[fieldIndex]
+            let (nestedMethod, nestedSegments) = extractRouteInfo nestedValue
 
-                let nestedValue = fields.[fieldIndex]
-                let (nestedMethod, nestedSegments) = extractRouteInfo nestedValue
+            let pathSegments =
+                if segment = "" then
+                    nestedSegments
+                else
+                    segment :: nestedSegments
 
-                let finalMethod =
-                    match nestedMethod with
-                    | Some m -> Some m
-                    | None -> method
+            (nestedMethod, pathSegments)
 
-                let pathSegments =
-                    if segment = "" then
-                        nestedSegments
-                    else
-                        [ segment ] @ nestedSegments
-
-                (finalMethod, pathSegments)
-
-            | None ->
-                let pathSegments = if segment = "" then [] else [ segment ]
-                (method, pathSegments)
+        | None ->
+            let pathSegments = if segment = "" then [] else [ segment ]
+            (method, pathSegments)
 
     // =========================================================================
     // Public API - Route Info
@@ -323,37 +316,20 @@ module Route =
             Path: string
         }
 
-    /// Gets full route metadata, returning None if route has no method. Internal helper.
-    let internal tryRouteInfo (route: 'T) : RouteInfo option =
-        let (methodOpt, segments) = extractRouteInfo (box route)
-
-        match methodOpt with
-        | Some method ->
-            let path =
-                if segments.IsEmpty then
-                    "/"
-                else
-                    "/" + String.concat "/" segments
-
-            Some { Method = method; Path = path }
-        | None -> None
-
     /// <summary>Gets full route metadata for a route value using reflection.</summary>
     /// <typeparam name="T">The route union type.</typeparam>
     /// <param name="route">The route value to inspect.</param>
     /// <returns>A <see cref="T:Falco.UnionRoutes.RouteInfo"/> with method and path.</returns>
-    /// <exception cref="T:System.Exception">Thrown if the route case has no HTTP method.</exception>
     let info (route: 'T) : RouteInfo =
-        match tryRouteInfo route with
-        | Some info -> info
-        | None ->
-            let case, _ = FSharpValue.GetUnionFields(route, typeof<'T>)
-            failwithf "Route case '%s' is missing [<Route(...)>] attribute" case.Name
+        let (method, segments) = extractRouteInfo (box route)
 
-    /// Gets HTTP method and path as a tuple. Internal helper for tests.
-    let internal routeTuple (route: 'T) : HttpMethod * string =
-        let info = info route
-        (info.Method, info.Path)
+        let path =
+            if segments.IsEmpty then
+                "/"
+            else
+                "/" + String.concat "/" segments
+
+        { Method = method; Path = path }
 
     // =========================================================================
     // Public API - Links
@@ -413,7 +389,7 @@ module Route =
                 if segment = "" then
                     nestedSegments
                 else
-                    [ segment ] @ nestedSegments
+                    segment :: nestedSegments
 
             | None -> if segment = "" then [] else [ segment ]
 
@@ -441,13 +417,23 @@ module Route =
     // =========================================================================
 
     /// Get a default value for a type
-    let private getDefaultValue (t: Type) : obj =
-        if t = typeof<Guid> then box Guid.Empty
-        elif t = typeof<string> then box ""
-        elif t = typeof<int> then box 0
-        elif t = typeof<int64> then box 0L
-        elif t.IsValueType then Activator.CreateInstance(t)
-        else null
+    let rec private getDefaultValue (t: Type) : obj =
+        if t = typeof<Guid> then
+            box Guid.Empty
+        elif t = typeof<string> then
+            box ""
+        elif t = typeof<int> then
+            box 0
+        elif t = typeof<int64> then
+            box 0L
+        elif isSingleCaseWrapper t then
+            let case = FSharpType.GetUnionCases(t).[0]
+            let innerDefault = getDefaultValue (case.GetFields().[0].PropertyType)
+            FSharpValue.MakeUnion(case, [| innerDefault |])
+        elif t.IsValueType then
+            Activator.CreateInstance(t)
+        else
+            null
 
     /// Enumerate all values of a union type
     // fsharplint:disable-next-line FL0085
@@ -533,8 +519,8 @@ module Route =
             [ $"Unbalanced braces in path '{path}'" ]
 
     let private extractPathParams (path: string) : string list =
-        System.Text.RegularExpressions.Regex.Matches(path, @"\{([^}]+)\}")
-        |> Seq.cast<System.Text.RegularExpressions.Match>
+        Regex.Matches(path, @"\{([^}]+)\}")
+        |> Seq.cast<Match>
         |> Seq.map (fun m -> m.Groups.[1].Value)
         |> Seq.toList
 
@@ -566,17 +552,13 @@ module Route =
         let missingInFields = Set.difference pathParams fieldNames
         let missingInPath = Set.difference fieldNames pathParams
 
-        let errors = ResizeArray()
+        [ if not (Set.isEmpty missingInFields) then
+              let missingStr = missingInFields |> String.concat ", "
+              $"Path params not found in fields for '{case.Name}': {missingStr}"
 
-        if not (Set.isEmpty missingInFields) then
-            let missingStr = missingInFields |> String.concat ", "
-            errors.Add($"Path params not found in fields for '{case.Name}': {missingStr}")
-
-        if not (Set.isEmpty missingInPath) then
-            let missingStr = missingInPath |> String.concat ", "
-            errors.Add($"Fields not in path for '{case.Name}': {missingStr}")
-
-        errors |> Seq.toList
+          if not (Set.isEmpty missingInPath) then
+              let missingStr = missingInPath |> String.concat ", "
+              $"Fields not in path for '{case.Name}': {missingStr}" ]
 
     let private countNestedRouteUnions (case: UnionCaseInfo) : int =
         case.GetFields()
@@ -585,21 +567,17 @@ module Route =
 
     let private validateCase (case: UnionCaseInfo) : string list =
         let path = getPathSegment case
-        let errors = ResizeArray()
-
         let nestedCount = countNestedRouteUnions case
 
-        if nestedCount > 1 then
-            errors.Add($"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)")
+        [ if nestedCount > 1 then
+              $"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)"
 
-        errors.AddRange(validatePathChars path)
-        errors.AddRange(validateBalancedBraces path)
-        errors.AddRange(validateNoDuplicateParams path)
+          yield! validatePathChars path
+          yield! validateBalancedBraces path
+          yield! validateNoDuplicateParams path
 
-        if path.Contains("{") then
-            errors.AddRange(validatePathParamsMatchFields case path)
-
-        errors |> Seq.toList
+          if path.Contains("{") then
+              yield! validatePathParamsMatchFields case path ]
 
     let rec private validateUnionType (unionType: Type) : string list =
         if not (FSharpType.IsUnion(unionType)) then
@@ -738,18 +716,7 @@ module Route =
             let fields = caseInfo.GetFields()
 
             let nestedUnionFieldIndex =
-                fields
-                |> Array.tryFindIndex (fun f ->
-                    FSharpType.IsUnion(f.PropertyType)
-                    && f.PropertyType <> typeof<string>
-                    && not (
-                        f.PropertyType.IsGenericType
-                        && f.PropertyType.GetGenericTypeDefinition() = typedefof<option<_>>
-                    )
-                    && not (tryGetPreInfo f.PropertyType |> Option.isSome)
-                    && not (tryGetOptPreInfo f.PropertyType |> Option.isSome)
-                    && not (tryGetQueryInfo f.PropertyType |> Option.isSome)
-                    && not (tryGetWrapperInfo f.PropertyType |> Option.isSome))
+                fields |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
 
             match nestedUnionFieldIndex with
             | Some idx ->
@@ -775,13 +742,15 @@ module Route =
         | RouteParam
         | QueryString
 
+        member this.Name =
+            match this with
+            | RouteParam -> "route"
+            | QueryString -> "query"
+
     let private isSupportedPrimitive (t: Type) = supportedPrimitives |> List.contains t
 
     let private tryParsePrimitive (primitiveType: Type) (value: string) (fieldName: string) (source: ParamSource) =
-        let sourceName =
-            match source with
-            | RouteParam -> "route"
-            | QueryString -> "query"
+        let sourceName = source.Name
 
         if primitiveType = typeof<Guid> then
             match Guid.TryParse(value) with
@@ -828,13 +797,7 @@ module Route =
         else
             match tryParsePrimitive primitiveType value fieldName source with
             | Some result -> Some result
-            | None ->
-                let sourceName =
-                    match source with
-                    | RouteParam -> "route"
-                    | QueryString -> "query"
-
-                Some(Error $"Unsupported primitive type for {sourceName}: {primitiveType.Name}")
+            | None -> Some(Error $"Unsupported primitive type for {source.Name}: {primitiveType.Name}")
 
     let private tryCustomParsers
         (parsers: FieldParser list)
@@ -920,21 +883,9 @@ module Route =
     let private findPrecondition (preconditions: PreconditionExtractor<'E> list) (fieldType: Type) =
         preconditions |> List.tryFind (fun p -> p.ForType = fieldType)
 
-    let rec private createDefaultValueForType (t: Type) : obj =
-        if t.IsValueType then
-            Activator.CreateInstance(t)
-        elif t = typeof<string> then
-            box ""
-        else
-            match tryGetWrapperInfo t with
-            | Some(innerType, wrapFn) ->
-                let innerDefault = createDefaultValueForType innerType
-                wrapFn innerDefault
-            | None -> null
-
     let private createSkippedOptPreValue (optPreType: Type) : obj =
         let innerType = optPreType.GetGenericArguments().[0]
-        let defaultValue = createDefaultValueForType innerType
+        let defaultValue = getDefaultValue innerType
         let optPreCase = FSharpType.GetUnionCases(optPreType).[0]
         FSharpValue.MakeUnion(optPreCase, [| defaultValue |])
 
