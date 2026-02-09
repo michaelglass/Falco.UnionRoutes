@@ -348,7 +348,10 @@ module VCS =
         // Commit the version file change
         Shell.runOrFail "jj" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
 
-        // Create git tag on the new commit (which is now @-)
+        // Move main bookmark to the new commit (now @-)
+        Shell.runOrFail "jj" "bookmark set main -r @-" |> ignore
+
+        // Create git tag on the new commit
         Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr)
         |> ignore
 
