@@ -103,7 +103,7 @@ let endpoints = Route.endpoints config handleRoute
 
 ## Reference
 
-See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a complete working example.
+See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a complete working example. Run it with `mise run example`.
 
 <!-- sync:conventions:start -->
 ### Route Conventions
