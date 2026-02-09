@@ -1,7 +1,7 @@
 <!-- sync:intro -->
 # Falco.UnionRoutes
 
-Define your routes as F# discriminated unions. Get exhaustive pattern matching, type-safe links, and automatic parameter extraction.
+Define your routes as F# discriminated unions. Get exhaustive pattern matching, type-safe links, and automatic parameter extraction. Inspired by Haskell's [Servant](https://docs.servant.dev/) library.
 
 ```fsharp
 type PostRoute =
@@ -139,24 +139,6 @@ See the [Example App](https://github.com/michaelglass/Falco.UnionRoutes/tree/mai
 [<Route(Path = "custom/{id}")>]                      // just path
 [<Route(RouteMethod.Put, Path = "custom/{id}")>]     // both
 ```
-
-Available methods: `Get`, `Post`, `Put`, `Delete`, `Patch`, `Any`
-
-**Path-less groups:**
-
-Use `Path = ""` to group routes without adding a path segment:
-
-```fsharp
-type InternalRoute =
-    | Metrics of PreCondition<AdminId>                         // GET /metrics
-    | [<Route(Path = "health-deep")>] DeepHealth of PreCondition<AdminId>  // GET /health-deep
-
-type Route =
-    | Public of PublicRoute
-    | [<Route(Path = "")>] Internal of InternalRoute  // no /internal prefix
-```
-
-Routes appear at `/metrics` and `/health-deep`, not `/internal/metrics`.
 <!-- sync:conventions:end -->
 
 <!-- sync:markertypes -->
@@ -173,93 +155,53 @@ Routes appear at `/metrics` and `/health-deep`, not `/internal/metrics`.
 <!-- sync:preconditions -->
 ### Preconditions
 
-`PreCondition<'T>` fields are extracted from precondition extractors (auth, validation, etc.), not from the URL:
+`OverridablePreCondition<'T>` lets child routes opt out with attributes:
 
 ```fsharp
-type PostRoute =
-    | List                                    // no auth required
-    | Create of PreCondition<UserId>          // requires auth
-    | Delete of PreCondition<UserId> * id: Guid  // auth + route param
-```
-
-**Skippable preconditions:** Use `OverridablePreCondition<'T>` when child routes can opt out:
-
-```fsharp
-type UserItemRoute =
+type ItemRoute =
     | List                                             // inherits preconditions
     | [<SkipAllPreconditions>] Public                  // skips all overridable preconditions
-    | [<SkipPrecondition(typeof<AdminId>)>] Limited    // skips specific one
+    | [<SkipPrecondition(typeof<UserId>)>] Limited     // skips specific one
 
 type Route =
-    | Users of userId: UserId * OverridablePreCondition<AdminId> * UserItemRoute
+    | Items of userId: UserId * OverridablePreCondition<UserId> * ItemRoute
 ```
 
-- `PreCondition<'T>` is strict - always runs, cannot be skipped
-- `OverridablePreCondition<'T>` is skippable via attributes on child routes
+- `PreCondition<'T>` — strict, always runs, cannot be skipped
+- `OverridablePreCondition<'T>` — skippable via `[<SkipAllPreconditions>]` or `[<SkipPrecondition(typeof<T>)>]`
 <!-- sync:preconditions:end -->
 
 <!-- sync:nestedroutes -->
 ### Nested Routes
 
-Routes can be nested to model RESTful resources. Use `Member` as a parent case with an `id` field plus a nested detail route:
-
 ```fsharp
 type PostDetailRoute =
-    | Show                                         // GET    /users/{userId}/posts/{postId}
-    | Edit                                         // GET    /users/{userId}/posts/{postId}/edit
-    | Delete                                       // DELETE /users/{userId}/posts/{postId}
-    | Patch                                        // PATCH  /users/{userId}/posts/{postId}
+    | Show                                         // GET    /posts/{id}
+    | Edit                                         // GET    /posts/{id}/edit
+    | Delete                                       // DELETE /posts/{id}
+    | Patch                                        // PATCH  /posts/{id}
 
 type PostRoute =
-    | List                                         // GET    /users/{userId}/posts
-    | Create                                       // POST   /users/{userId}/posts
-    | Member of postId: Guid * PostDetailRoute     //        /users/{userId}/posts/{postId}/...
-
-type UserDetailRoute =
-    | Show                                         // GET    /users/{userId}
-    | Edit                                         // GET    /users/{userId}/edit
-    | Delete                                       // DELETE /users/{userId}
-    | Patch                                        // PATCH  /users/{userId}
-    | Posts of PostRoute                           //        /users/{userId}/posts/...
-
-type UserRoute =
-    | List                                         // GET    /users
-    | Create                                       // POST   /users
-    | Member of userId: Guid * UserDetailRoute     //        /users/{userId}/...
+    | List of page: QueryParam<int> option         // GET    /posts?page=1
+    | Create of PreCondition<UserId>               // POST   /posts
+    | Search of query: QueryParam<string>          // GET    /posts/search?query=hello
+    | Member of id: Guid * PostDetailRoute         //        /posts/{id}/...
 ```
 
-`Member` produces no case-name prefix — just the `{param}` — so detail routes nest cleanly under `/{id}/...`. Inner `Show`, `Delete`, and `Patch` collapse to the same path with different HTTP methods. `Edit` without fields produces `/edit`.
+`Member` produces a param-only path (no case-name prefix). `Show`/`Delete`/`Patch` collapse to the same path with different methods. `Edit` produces `/edit`.
 <!-- sync:nestedroutes:end -->
 
 <!-- sync:validation -->
 ### Route Validation
 
-`Route.endpoints` automatically validates route structure (paths, field names, etc.) at startup. To also check precondition coverage, add a test:
+`Route.endpoints` automatically validates route structure at startup. To also check precondition coverage, add a test:
 
 ```fsharp
 [<Fact>]
 let ``all routes are valid`` () =
-    let preconditions =
-        [ Extractor.precondition<UserId, AppError> requireAuth
-          Extractor.precondition<AdminId, AppError> requireAdmin
-          Extractor.overridablePrecondition<AdminId, AppError> requireAdmin ]
-
-    // Full validation: route structure + precondition coverage
-    let result = Route.validate<Route, AppError> preconditions
+    let result = Route.validate<Route, AppError> config.Preconditions
     Assert.Equal(Ok (), result)
 ```
-
-**What gets validated:**
-
-| Check | When |
-|-------|------|
-| Invalid path characters | `endpoints` (automatic) |
-| Unbalanced braces in paths | `endpoints` (automatic) |
-| Duplicate path params | `endpoints` (automatic) |
-| Path params match field names | `endpoints` (automatic) |
-| Multiple nested route unions | `endpoints` (automatic) |
-| All `PreCondition<T>` have extractors | `validate` / `validatePreconditions` |
-| All `OverridablePreCondition<T>` have extractors | `validate` / `validatePreconditions` |
 <!-- sync:validation:end -->
 
 <!-- sync:keyfunctions -->
@@ -269,6 +211,7 @@ let ``all routes are valid`` () =
 // Route module
 Route.endpoints config handler       // Generate endpoints with extraction (main entry point)
 Route.link route                     // Type-safe URL: "/posts/abc-123"
+Route.info route                     // RouteInfo with Method and Path
 Route.allRoutes<Route>()             // Enumerate all routes
 Route.validateStructure<Route>()     // Validate route structure only
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage

@@ -120,7 +120,7 @@ module Handlers =
             "Post List"
             [ ("page", string pageNum) ]
             [ "List convention — GET with no path segment"
-              "QueryParam<int> option — optional query parameter" ]
+              "QueryParam&lt;int&gt; option — optional query parameter" ]
 
     /// POST /posts — Create/POST convention + PreCondition
     let postCreate (userId: UserId) : HttpHandler =
@@ -130,7 +130,7 @@ module Handlers =
             "Post Created"
             [ ("userId", string uid) ]
             [ "Create convention — POST method inferred from case name"
-              "PreCondition<UserId> — value extracted via precondition" ]
+              "PreCondition&lt;UserId&gt; — value extracted via precondition" ]
 
     /// GET /posts/search — Default kebab-case + required QueryParam
     let postSearch (query: QueryParam<string>) : HttpHandler =
@@ -140,7 +140,7 @@ module Handlers =
             "Post Search"
             [ ("query", q) ]
             [ "Default kebab-case path — Search becomes /search"
-              "QueryParam<string> — required query parameter" ]
+              "QueryParam&lt;string&gt; — required query parameter" ]
 
     /// GET /posts/{id} — Show convention
     let postShow (id: Guid) : HttpHandler =
@@ -169,7 +169,7 @@ module Handlers =
         featurePage
             "Item List"
             [ ("userId", string uid) ]
-            [ "OverridablePreCondition<UserId> — precondition inherited from parent"
+            [ "OverridablePreCondition&lt;UserId&gt; — precondition inherited from parent"
               "Single-case DU wrapper — UserId of Guid in path" ]
 
     /// GET /items/{userId}/public — SkipAllPreconditions
@@ -179,7 +179,7 @@ module Handlers =
         featurePage
             "Public Items"
             [ ("userId", string uid) ]
-            [ "[<SkipAllPreconditions>] — all OverridablePreCondition skipped"
+            [ "[&lt;SkipAllPreconditions&gt;] — all OverridablePreCondition skipped"
               "No X-User-Id header required for this route" ]
 
     /// GET /items/{userId}/limited — SkipPrecondition(typeof<UserId>)
@@ -189,7 +189,7 @@ module Handlers =
         featurePage
             "Limited Items"
             [ ("userId", string uid) ]
-            [ "[<SkipPrecondition(typeof<UserId>)>] — skips only OverridablePreCondition<UserId>" ]
+            [ "[&lt;SkipPrecondition(typeof&lt;UserId&gt;)&gt;] — skips only OverridablePreCondition&lt;UserId&gt;" ]
 
     /// GET /articles/{slug} — Custom path + custom parser
     let article (slug: Slug) : HttpHandler =
@@ -198,7 +198,7 @@ module Handlers =
         featurePage
             "Article"
             [ ("slug", s) ]
-            [ "Custom path via [<Route(Path = \"articles/{slug}\")>]"
+            [ "Custom path via [&lt;Route(Path = \"articles/{slug}\")&gt;]"
               "Custom parser via Extractor.parser" ]
 
     /// PUT /settings — Custom method + custom path + PreCondition
@@ -208,8 +208,8 @@ module Handlers =
         featurePage
             "Settings Updated"
             [ ("userId", string uid) ]
-            [ "Custom method via [<Route(RouteMethod.Put, Path = \"settings\")>]"
-              "PreCondition<UserId> — auth required" ]
+            [ "Custom method via [&lt;Route(RouteMethod.Put, Path = \"settings\")&gt;]"
+              "PreCondition&lt;UserId&gt; — auth required" ]
 
     /// GET /dashboard — Path-less group + PreCondition
     let dashboard (userId: UserId) : HttpHandler =
@@ -218,8 +218,8 @@ module Handlers =
         featurePage
             "Admin Dashboard"
             [ ("userId", string uid) ]
-            [ "Path-less group via [<Route(Path = \"\")>] on parent"
-              "PreCondition<UserId> — auth required" ]
+            [ "Path-less group via [&lt;Route(Path = \"\")&gt;] on parent"
+              "PreCondition&lt;UserId&gt; — auth required" ]
 
     /// GET /health — Default kebab-case
     let health: HttpHandler = Response.ofJson {| status = "ok" |}

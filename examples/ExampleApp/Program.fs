@@ -67,8 +67,16 @@ let endpointConfig: EndpointConfig<AppError> =
 let sampleId = Guid.Parse("11111111-1111-1111-1111-111111111111")
 
 /// Replace {param} placeholders with sample values for browsable links
-let makeBrowsable (path: string) =
-    path.Replace("{id}", sampleId.ToString()).Replace("{userId}", sampleId.ToString()).Replace("{slug}", "hello-world")
+let makeBrowsable (route: Route) (path: string) =
+    let path =
+        path
+            .Replace("{id}", sampleId.ToString())
+            .Replace("{userId}", sampleId.ToString())
+            .Replace("{slug}", "hello-world")
+
+    match route with
+    | Posts(Search _) -> path + "?query=hello"
+    | _ -> path
 
 let home: HttpHandler =
     let allRoutes = Route.allRoutes<Route> ()
@@ -98,7 +106,7 @@ let home: HttpHandler =
                      |> List.map (fun route ->
                          let info = Route.info route
                          let methodStr = info.Method.ToString().ToUpper()
-                         let browsable = makeBrowsable info.Path
+                         let browsable = makeBrowsable route info.Path
 
                          Elem.tr
                              []
