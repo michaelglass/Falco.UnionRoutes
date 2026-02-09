@@ -341,14 +341,14 @@ module VCS =
         | Some tag -> HasPreviousRelease(tag, Version.parse tag)
         | None -> FirstRelease
 
-    let commitAndTag (version: Version) =
+    let squashAndTag (version: Version) =
         let versionStr = Version.format version
         let tag = Version.toTag version
 
-        // Use jj to commit the version file change
-        Shell.runOrFail "jj" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
+        // Squash version file change into the parent commit (no separate "Release" commit)
+        Shell.runOrFail "jj" "squash --ignore-immutable" |> ignore
 
-        // Create git tag (jj doesn't have tags, uses bookmarks, but git tags work in colocated repos)
+        // Create git tag on HEAD (parent commit, which now includes the version bump)
         Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr)
         |> ignore
 
@@ -561,7 +561,7 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
                 Aborted
             else
                 Project.updateVersion bump.NewVersion
-                let tag = VCS.commitAndTag bump.NewVersion
+                let tag = VCS.squashAndTag bump.NewVersion
                 printfn "Created tag %s" tag
 
                 match mode with
