@@ -206,7 +206,7 @@ type PostRoute =
 | Param/field mismatch | `[<Route(Path = "{userId}")>] Profile of id: Guid` | Path params not found in fields |
 | Multiple nested unions | `Both of ChildA * ChildB` | Case has 2 nested route unions (max 1) |
 
-**Uniqueness errors** (`Route.validateUniqueness`):
+**Uniqueness errors** (checked by `Route.validate` and `Route.endpoints`):
 
 | Error | Example | Message |
 |-------|---------|---------|
@@ -239,7 +239,6 @@ Route.link route                     // Type-safe URL: "/posts/abc-123"
 Route.info route                     // RouteInfo with Method and Path
 Route.allRoutes<Route>()             // Enumerate all routes
 Route.validateStructure<Route>()     // Validate path structure only
-Route.validateUniqueness<Route>()    // Detect duplicate/ambiguous routes
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
 Route.validate<Route, Error> preconditions               // Full validation (for tests)
 
