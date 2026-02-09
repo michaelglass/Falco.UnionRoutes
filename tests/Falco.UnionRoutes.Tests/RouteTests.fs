@@ -150,12 +150,6 @@ let ``routeInfo returns info for valid route`` () =
     test <@ info.Method = HttpMethod.Get @>
     test <@ info.Path = "/posts" @>
 
-[<Fact>]
-let ``routeTuple returns method and path`` () =
-    let (method, path) = Route.routeTuple PostRoute.List
-    test <@ method = HttpMethod.Get @>
-    test <@ path = "/posts" @>
-
 // =============================================================================
 // allRoutes enumeration tests
 // =============================================================================
@@ -194,17 +188,12 @@ let ``allRoutes uses default values for parameters`` () =
     | PostRoute.Delete id -> failwith $"Expected Detail route, got Delete {id}"
 
 [<Fact>]
-let ``All enumerated routes have valid RouteAttribute`` () =
+let ``All enumerated routes have valid RouteInfo`` () =
     let routes = Route.allRoutes<TestRoute> ()
 
-    let invalidRoutes =
-        routes
-        |> List.choose (fun route ->
-            match Route.tryRouteInfo route with
-            | None -> Some $"Route missing attribute: {route}"
-            | Some _ -> None)
-
-    test <@ List.isEmpty invalidRoutes @>
+    for route in routes do
+        let info = Route.info route
+        test <@ info.Path.StartsWith("/") @>
 
 // =============================================================================
 // link function tests
