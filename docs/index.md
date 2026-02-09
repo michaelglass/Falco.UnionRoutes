@@ -194,7 +194,32 @@ type PostRoute =
 <!-- sync:validation -->
 ### Route Validation
 
-`Route.endpoints` automatically validates route structure at startup. To also check precondition coverage, add a test:
+`Route.endpoints` automatically validates at startup and will fail fast with descriptive errors. `Route.validate` combines all checks for use in tests.
+
+**Structure errors** (`Route.validateStructure`):
+
+| Error | Example | Message |
+|-------|---------|---------|
+| Invalid path characters | `[<Route(Path = "hello world")>]` | Invalid characters in path |
+| Unbalanced braces | `[<Route(Path = "users/{id")>]` | Unbalanced braces in path |
+| Duplicate path params | `[<Route(Path = "{id}/sub/{id}")>]` | Duplicate path parameters |
+| Param/field mismatch | `[<Route(Path = "{userId}")>] Profile of id: Guid` | Path params not found in fields |
+| Multiple nested unions | `Both of ChildA * ChildB` | Case has 2 nested route unions (max 1) |
+
+**Uniqueness errors** (`Route.validateUniqueness`):
+
+| Error | Example | Message |
+|-------|---------|---------|
+| Duplicate routes | `ById of id: Guid` + `BySlug of slug: string` both at `GET /items/{_}` | Duplicate route: 'ById' and 'BySlug' both resolve to... |
+| Ambiguous routes | `GET /{cat}/new` vs `GET /posts/{action}` (neither is more specific) | Ambiguous routes: ... overlap with no clear specificity winner |
+
+**Precondition errors** (`Route.validatePreconditions`):
+
+| Error | Example | Message |
+|-------|---------|---------|
+| Missing extractor | `PreCondition<UserId>` field with no registered extractor | Missing preconditions for: PreCondition\<UserId\> |
+
+Routes with overlapping patterns are automatically sorted by specificity (`/posts/new` before `/posts/{id}`).
 
 ```fsharp
 [<Fact>]
@@ -213,7 +238,8 @@ Route.endpoints config handler       // Generate endpoints with extraction (main
 Route.link route                     // Type-safe URL: "/posts/abc-123"
 Route.info route                     // RouteInfo with Method and Path
 Route.allRoutes<Route>()             // Enumerate all routes
-Route.validateStructure<Route>()     // Validate route structure only
+Route.validateStructure<Route>()     // Validate path structure only
+Route.validateUniqueness<Route>()    // Detect duplicate/ambiguous routes
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
 Route.validate<Route, Error> preconditions               // Full validation (for tests)
 
