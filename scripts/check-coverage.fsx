@@ -11,7 +11,7 @@ open System.Xml.Linq
 // Configuration
 // ============================================================================
 
-let minCoverage = 50.0 // Minimum per-file coverage percentage
+let minCoverage = 100.0 // Minimum per-file coverage percentage
 let coverageDir = "coverage"
 // Only check main library .fs files (exclude test files)
 let includedExtensions = [| ".fs" |]

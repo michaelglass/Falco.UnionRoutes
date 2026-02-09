@@ -234,19 +234,15 @@ module Route =
         else
             let pathFields = fields |> Array.filter (fun f -> not (isNonRouteField f))
 
-            let hasNestedUnion =
-                fields |> Array.exists (fun f -> isNestedRouteUnion f.PropertyType)
-
             if pathFields.Length = 0 then
                 None
             else
                 let paramPath =
                     pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
 
-                match isEmptySegmentName case.Name, hasNestedUnion with
-                | true, _ -> Some paramPath
-                | false, true -> Some(toKebabCase case.Name + "/" + paramPath)
-                | false, false -> Some paramPath
+                match isEmptySegmentName case.Name with
+                | true -> Some paramPath
+                | false -> Some(toKebabCase case.Name + "/" + paramPath)
 
     /// Get path segment from a case
     let private getPathSegment (case: UnionCaseInfo) : string =

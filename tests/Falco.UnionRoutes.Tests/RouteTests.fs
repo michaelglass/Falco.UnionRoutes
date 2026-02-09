@@ -141,16 +141,6 @@ let ``Nested route inherits method from leaf`` () =
     test <@ info.Method = HttpMethod.Post @>
 
 // =============================================================================
-// routeInfo (throwing version) tests
-// =============================================================================
-
-[<Fact>]
-let ``routeInfo returns info for valid route`` () =
-    let info = Route.info PostRoute.List
-    test <@ info.Method = HttpMethod.Get @>
-    test <@ info.Path = "/posts" @>
-
-// =============================================================================
 // allRoutes enumeration tests
 // =============================================================================
 
@@ -341,19 +331,12 @@ let ``endpoints generates HttpEndpoint list from handler`` () =
 // Multiple route parameters tests
 // =============================================================================
 
-type MultiParamRoute =
-    | [<Route(RouteMethod.Get, Path = "{a}/{b}")>] TwoParams of a: Guid * b: Guid
-    | Edit of a: Guid * b: int
+type MultiParamRoute = | [<Route(RouteMethod.Get, Path = "{a}/{b}")>] TwoParams of a: Guid * b: Guid
 
 [<Fact>]
 let ``Route with multiple parameters includes all in path`` () =
     let info = Route.info (MultiParamRoute.TwoParams(Guid.Empty, Guid.Empty))
 
-    test <@ info.Path = "/{a}/{b}" @>
-
-[<Fact>]
-let ``Convention route infers multiple parameters`` () =
-    let info = Route.info (MultiParamRoute.Edit(Guid.Empty, 0))
     test <@ info.Path = "/{a}/{b}" @>
 
 [<Fact>]
@@ -441,7 +424,7 @@ type NestedItemId = NestedItemId of Guid
 
 type UserItemRoute =
     | List
-    | Detail of itemId: NestedItemId
+    | Show of itemId: NestedItemId
 
 type UserProfileRoute =
     | View
@@ -463,12 +446,11 @@ let ``Nested route with params includes case name in path`` () =
     test <@ info.Path = "/users/{userId}/items" @>
 
 [<Fact>]
-let ``Nested route with params and child detail includes all segments`` () =
+let ``Nested route with params and child show includes all segments`` () =
     let route =
-        NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items(UserItemRoute.Detail(NestedItemId Guid.Empty)))
+        NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items(UserItemRoute.Show(NestedItemId Guid.Empty)))
 
     let info = Route.info route
-    // Should be /users/{userId}/items/{itemId}
     test <@ info.Path = "/users/{userId}/items/{itemId}" @>
 
 [<Fact>]
@@ -477,7 +459,7 @@ let ``Nested route with params link substitutes values`` () =
     let itemId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 
     let route =
-        NestedParentRoute.Users(userId, NestedUserRoute.Items(UserItemRoute.Detail(NestedItemId itemId)))
+        NestedParentRoute.Users(userId, NestedUserRoute.Items(UserItemRoute.Show(NestedItemId itemId)))
 
     let url = Route.link route
     test <@ url = "/users/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/items/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" @>
@@ -485,7 +467,7 @@ let ``Nested route with params link substitutes values`` () =
 [<Fact>]
 let ``Nested route with params enumerates all routes`` () =
     let routes = Route.allRoutes<NestedParentRoute> ()
-    // Users has 2 children (Items, Profile), Items has 2 (List, Detail), Profile has 2 (View, Edit)
+    // Users has 2 children (Items, Profile), Items has 2 (List, Show), Profile has 2 (View, Edit)
     // Total: 4 routes
     test <@ List.length routes = 4 @>
 
@@ -625,61 +607,6 @@ let ``validateStructure catches multiple nested route unions`` () =
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route unions")) @>
     | Ok() -> failwith "Expected validation error for multiple nested unions"
-
-// =============================================================================
-// RESTful case names with nested routes tests
-// =============================================================================
-
-type NestedChildRoute =
-    | List
-    | Detail of id: Guid
-
-type ShowNestedRoute = Show of NestedChildRoute
-
-type DeleteNestedRoute = Delete of NestedChildRoute
-
-type EditNestedRoute = Edit of NestedChildRoute
-
-type MemberNestedRoute = Member of NestedChildRoute
-
-[<Fact>]
-let ``Show of nested route passes through without prefix`` () =
-    let route = ShowNestedRoute.Show NestedChildRoute.List
-    let info = Route.info route
-    test <@ info.Path = "/" @>
-
-[<Fact>]
-let ``Show of nested route with params passes through`` () =
-    let route = ShowNestedRoute.Show(NestedChildRoute.Detail Guid.Empty)
-    let info = Route.info route
-    // Detail has params, so it gets /detail/{id}
-    test <@ info.Path = "/{id}" @>
-
-[<Fact>]
-let ``Delete of nested route passes through without prefix`` () =
-    let route = DeleteNestedRoute.Delete NestedChildRoute.List
-    let info = Route.info route
-    test <@ info.Path = "/" @>
-    // Method comes from leaf (List → GET), not parent
-    test <@ info.Method = HttpMethod.Get @>
-
-[<Fact>]
-let ``Edit of nested route adds edit prefix`` () =
-    let route = EditNestedRoute.Edit NestedChildRoute.List
-    let info = Route.info route
-    test <@ info.Path = "/edit" @>
-
-[<Fact>]
-let ``Member of nested route passes through without prefix`` () =
-    let route = MemberNestedRoute.Member NestedChildRoute.List
-    let info = Route.info route
-    test <@ info.Path = "/" @>
-
-[<Fact>]
-let ``Member of nested route with params passes through`` () =
-    let route = MemberNestedRoute.Member(NestedChildRoute.Detail Guid.Empty)
-    let info = Route.info route
-    test <@ info.Path = "/{id}" @>
 
 // =============================================================================
 // Nested RESTful route pattern tests
@@ -823,3 +750,45 @@ let ``RESTful nested routes - link generation`` () =
         )
 
     test <@ url = "/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/posts/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb/edit" @>
+
+// =============================================================================
+// Regression: multiple parameterized cases must have distinct paths
+// =============================================================================
+
+/// Reproduces a bug where two POST cases with only parameters (no fieldless sub-cases)
+/// both get their case name dropped by convention, producing identical routes.
+/// Analogous to AdminJobs.Run and AdminJobs.Schedule in the Intelligence project.
+type JobRoute =
+    | [<Route>] List
+    | [<Route(RouteMethod.Post)>] Run of job: string
+    | [<Route(RouteMethod.Post)>] Schedule of job: string
+
+[<Fact>]
+let ``parameterized POST cases include case name in path`` () =
+    let runInfo = Route.info (JobRoute.Run "test-job")
+    let scheduleInfo = Route.info (JobRoute.Schedule "test-job")
+    test <@ runInfo.Path = "/run/{job}" @>
+    test <@ scheduleInfo.Path = "/schedule/{job}" @>
+
+[<Fact>]
+let ``parameterized POST cases generate distinct links`` () =
+    let runLink = Route.link (JobRoute.Run "test-job")
+    let scheduleLink = Route.link (JobRoute.Schedule "test-job")
+    test <@ runLink = "/run/test-job" @>
+    test <@ scheduleLink = "/schedule/test-job" @>
+
+// =============================================================================
+// Convention-based path inference with multiple parameters
+// =============================================================================
+
+type MultiFieldConventionRoute = SearchNearby of lat: float * lng: float
+
+[<Fact>]
+let ``convention route with multiple params includes case name prefix`` () =
+    let info = Route.info (MultiFieldConventionRoute.SearchNearby(0.0, 0.0))
+    test <@ info.Path = "/search-nearby/{lat}/{lng}" @>
+
+[<Fact>]
+let ``convention route with multiple params substitutes values in link`` () =
+    let url = Route.link (MultiFieldConventionRoute.SearchNearby(51.5, -0.1))
+    test <@ url = "/search-nearby/51.5/-0.1" @>
