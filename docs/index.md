@@ -127,6 +127,7 @@ See the [Example App](https://github.com/michaelglass/Falco.UnionRoutes/tree/mai
 | `List`    | GET    | `/`  | empty path                     |
 | `Create`  | POST   | `/`  | empty path, POST method        |
 | `Show`    | GET    | `/{params}` | param-only path           |
+| `Member`  | GET    | `/{params}` | param-only path (alias for Show) |
 | `Edit`    | GET    | `/edit`     | produces path segment     |
 | `Delete`  | DELETE | `/{params}` | DELETE method             |
 | `Patch`   | PATCH  | `/{params}` | PATCH method              |
@@ -200,24 +201,34 @@ type Route =
 <!-- sync:nestedroutes -->
 ### Nested Routes
 
-Routes can be nested. Use `Show` as a parent case with an `id` field plus a nested route to get clean RESTful paths:
+Routes can be nested to model RESTful resources. Use `Member` as a parent case with an `id` field plus a nested detail route:
 
 ```fsharp
-type EmailRoute =
-    | List                                         // GET  /users/{userId}/emails
-    | Create                                       // POST /users/{userId}/emails
-    | Show of emailId: Guid                        // GET  /users/{userId}/emails/{emailId}
+type PostDetailRoute =
+    | Show                                         // GET    /users/{userId}/posts/{postId}
+    | Edit                                         // GET    /users/{userId}/posts/{postId}/edit
+    | Delete                                       // DELETE /users/{userId}/posts/{postId}
+    | Patch                                        // PATCH  /users/{userId}/posts/{postId}
+
+type PostRoute =
+    | List                                         // GET    /users/{userId}/posts
+    | Create                                       // POST   /users/{userId}/posts
+    | Member of postId: Guid * PostDetailRoute     //        /users/{userId}/posts/{postId}/...
 
 type UserDetailRoute =
-    | Emails of EmailRoute                         // /emails/...
-    | Edit                                         // GET /users/{userId}/edit
+    | Show                                         // GET    /users/{userId}
+    | Edit                                         // GET    /users/{userId}/edit
+    | Delete                                       // DELETE /users/{userId}
+    | Patch                                        // PATCH  /users/{userId}
+    | Posts of PostRoute                           //        /users/{userId}/posts/...
 
 type UserRoute =
-    | List                                         // GET /users
-    | Show of userId: Guid * UserDetailRoute       // /users/{userId}/...
+    | List                                         // GET    /users
+    | Create                                       // POST   /users
+    | Member of userId: Guid * UserDetailRoute     //        /users/{userId}/...
 ```
 
-`Show` produces no case-name prefix — just the `{param}` — so child routes nest cleanly under `/users/{userId}/...`. `Edit` without fields produces `/edit`, enabling actions like `/users/{userId}/edit`.
+`Member` produces no case-name prefix — just the `{param}` — so detail routes nest cleanly under `/{id}/...`. Inner `Show`, `Delete`, and `Patch` collapse to the same path with different HTTP methods. `Edit` without fields produces `/edit`.
 <!-- sync:nestedroutes:end -->
 
 <!-- sync:validation -->

@@ -95,10 +95,10 @@ type NestedUserRoute =
     | Dashboard of UserDashboardRoute
     | Edit // GET /user-with-params/{userId}/edit - "Edit" produces /edit path segment
 
-// "Show" produces no case-name prefix, just {userId} - so child routes nest under /{userId}/...
+// "Member" produces no case-name prefix, just {userId} - so child routes nest under /{userId}/...
 type UserWithParamsRoute =
     | List // GET /user-with-params
-    | Show of userId: UserId * OverridablePreCondition<AdminId> * NestedUserRoute // /user-with-params/{userId}/...
+    | Member of userId: UserId * OverridablePreCondition<AdminId> * NestedUserRoute // /user-with-params/{userId}/...
 
 // Path-less group example - groups routes without adding a path segment
 // The empty Path = "" on Route means these routes appear at root level (no /internal prefix)
@@ -733,7 +733,7 @@ let handleUserWithParams (route: UserWithParamsRoute) : HttpHandler =
             [ Elem.h1 [] [ Text.raw "User List (Nested)" ]
               Elem.p [] [ Text.raw "This is the list view at /user-with-params" ]
               Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
-    | UserWithParamsRoute.Show(userId, OverridablePreCondition adminId, nestedRoute) ->
+    | UserWithParamsRoute.Member(userId, OverridablePreCondition adminId, nestedRoute) ->
         // Convert sentinel Guid.Empty to None, actual values to Some
         // (Skipped OverridablePreCondition uses default value, which for AdminId is AdminId(Guid.Empty))
         let adminIdOpt =

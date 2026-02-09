@@ -228,6 +228,7 @@ module Route =
 
                 match case.Name, hasNestedUnion with
                 | "Show", _
+                | "Member", _
                 | "List", _
                 | "Delete", _
                 | "Patch", _
@@ -253,6 +254,7 @@ module Route =
                 | "List"
                 | "Create"
                 | "Show"
+                | "Member"
                 | "Delete"
                 | "Patch" -> ""
                 | caseName -> toKebabCase caseName
