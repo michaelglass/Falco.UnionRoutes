@@ -127,7 +127,7 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `List`    | GET    | `/`  | empty path                     |
 | `Create`  | POST   | `/`  | empty path, POST method        |
 | `Show`    | GET    | `/{params}` | param-only path           |
-| `Edit`    | GET    | `/{params}` | param-only path           |
+| `Edit`    | GET    | `/edit`     | produces path segment     |
 | `Delete`  | DELETE | `/{params}` | DELETE method             |
 | `Patch`   | PATCH  | `/{params}` | PATCH method              |
 
@@ -200,17 +200,24 @@ type Route =
 <!-- sync:nestedroutes:start -->
 ### Nested Routes
 
-Routes can be nested. When a case has both parameters AND a nested route, the case name becomes a path segment:
+Routes can be nested. Use `Show` as a parent case with an `id` field plus a nested route to get clean RESTful paths:
 
 ```fsharp
-type ItemRoute =
-    | List
-    | Show of itemId: Guid                         // "Show" convention: /{itemId}
+type EmailRoute =
+    | List                                         // GET  /users/{userId}/emails
+    | Create                                       // POST /users/{userId}/emails
+    | Show of emailId: Guid                        // GET  /users/{userId}/emails/{emailId}
 
-type Route =
-    | Items of ItemRoute                           // /items/...
-    | UserItems of userId: Guid * ItemRoute        // /user-items/{userId}/...
+type UserDetailRoute =
+    | Emails of EmailRoute                         // /emails/...
+    | Edit                                         // GET /users/{userId}/edit
+
+type UserRoute =
+    | List                                         // GET /users
+    | Show of userId: Guid * UserDetailRoute       // /users/{userId}/...
 ```
+
+`Show` produces no case-name prefix — just the `{param}` — so child routes nest cleanly under `/users/{userId}/...`. `Edit` without fields produces `/edit`, enabling actions like `/users/{userId}/edit`.
 <!-- sync:nestedroutes:end -->
 
 <!-- sync:validation:start -->

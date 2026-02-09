@@ -1,5 +1,6 @@
 # Claude
 .claude/settings.local.json
+CLAUDE.md
 
 # Build results
 [Bb]in/
@@ -56,3 +57,5 @@ output/
 
 # Temp
 tmp/
+
+.fake

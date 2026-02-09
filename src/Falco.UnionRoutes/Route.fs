@@ -254,8 +254,7 @@ module Route =
                 | "Create"
                 | "Show"
                 | "Delete"
-                | "Patch"
-                | "Edit" -> ""
+                | "Patch" -> ""
                 | caseName -> toKebabCase caseName
 
     /// Get HTTP method from a case's RouteAttribute
