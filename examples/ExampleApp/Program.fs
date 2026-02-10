@@ -4,8 +4,11 @@ open System
 open ExampleApp
 open Falco
 open Falco.Markup
+open Falco.Routing
 open Falco.UnionRoutes
+open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Builder
+open Microsoft.Extensions.DependencyInjection
 
 // =============================================================================
 // Route Definitions
@@ -28,7 +31,7 @@ type ItemRoute =
     | [<SkipAllPreconditions>] Public
     | [<SkipPrecondition(typeof<UserId>)>] Limited
 
-type AdminRoute = Dashboard of PreCondition<UserId>
+type AdminRoute = Dashboard of PreCondition<AdminId>
 
 type Route =
     | Root
@@ -52,7 +55,8 @@ let slugParser: Parser<Slug> = fun s -> Ok(Slug s)
 let endpointConfig: EndpointConfig<AppError> =
     { Preconditions =
         [ Extractor.precondition<UserId, AppError> Handlers.requireAuth
-          Extractor.overridablePrecondition<UserId, AppError> Handlers.requireAuth ]
+          Extractor.overridablePrecondition<UserId, AppError> Handlers.requireAuth
+          Extractor.precondition<AdminId, AppError> Handlers.requireAdmin ]
       Parsers = [ Extractor.parser slugParser ]
       MakeError = fun msg -> BadRequest msg
       CombineErrors =
@@ -90,6 +94,14 @@ let home: HttpHandler =
               []
               [ Text.raw $"Discovered {allRoutes.Length} routes via "
                 Elem.code [] [ Text.raw "Route.allRoutes<Route>()" ] ]
+
+          Elem.p
+              []
+              [ Elem.a [ Attr.href "/login" ] [ Text.raw "Log in" ]
+                Text.raw " | "
+                Elem.form
+                    [ Attr.method "post"; Attr.action "/logout"; Attr.style "display:inline" ]
+                    [ Elem.input [ Attr.type' "submit"; Attr.value "Log out" ] ] ]
 
           // Route table via Route.info
           Elem.h2 [] [ Text.raw "All routes" ]
@@ -137,11 +149,14 @@ Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}
           Elem.pre
               []
               [ Text.raw
-                    $"""# Create post (requires X-User-Id header)
-curl -X POST http://localhost:5000/posts -H "X-User-Id: {sampleId}"
+                    $"""# Log in first (creates auth cookie)
+curl -c cookies.txt -X POST http://localhost:5000/login -d "userId={sampleId}&isAdmin=true"
+
+# Create post (requires auth cookie)
+curl -b cookies.txt -X POST http://localhost:5000/posts
 
 # Update settings (PUT, requires auth)
-curl -X PUT http://localhost:5000/settings -H "X-User-Id: {sampleId}"
+curl -b cookies.txt -X PUT http://localhost:5000/settings
 
 # Delete post
 curl -X DELETE http://localhost:5000/posts/{sampleId}
@@ -181,7 +196,7 @@ let handleRoute (route: Route) : HttpHandler =
     | Route.Article slug -> Handlers.article slug
     | Route.UpdateSettings(PreCondition userId) -> Handlers.updateSettings userId
     | Route.Items(userId, _, itemRoute) -> handleItem userId itemRoute
-    | Route.Admin(AdminRoute.Dashboard(PreCondition userId)) -> Handlers.dashboard userId
+    | Route.Admin(AdminRoute.Dashboard(PreCondition adminId)) -> Handlers.dashboard adminId
     | Route.Health -> Handlers.health
 
 // =============================================================================
@@ -190,11 +205,21 @@ let handleRoute (route: Route) : HttpHandler =
 
 let endpoints = Route.endpoints endpointConfig handleRoute
 
+let authEndpoints =
+    [ get "/login" Handlers.loginPage
+      post "/login" Handlers.loginSubmit
+      post "/logout" Handlers.logoutSubmit ]
+
 [<EntryPoint>]
 let main args =
     let builder = WebApplication.CreateBuilder(args)
+
+    builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie()
+    |> ignore
+
     let app = builder.Build()
+    app.UseAuthentication() |> ignore
     app.UseRouting() |> ignore
-    app.UseFalco(endpoints) |> ignore
+    app.UseFalco(authEndpoints @ endpoints) |> ignore
     app.Run()
     0

@@ -1,19 +1,24 @@
 namespace ExampleApp
 
 open System
+open System.Security.Claims
 open Falco
 open Falco.Markup
 open Falco.UnionRoutes
+open Microsoft.AspNetCore.Authentication
+open Microsoft.AspNetCore.Authentication.Cookies
 
 // =============================================================================
 // Domain Types
 // =============================================================================
 
 type UserId = UserId of Guid
+type AdminId = AdminId of Guid
 type Slug = Slug of string
 
 type AppError =
     | NotAuthenticated
+    | Forbidden of string
     | BadRequest of string
 
 // =============================================================================
@@ -81,7 +86,16 @@ module Handlers =
                 layout
                     "Error 401"
                     [ Elem.h1 [ Attr.class' "error" ] [ Text.raw "401 Unauthorized" ]
-                      Elem.p [] [ Text.raw "X-User-Id header required." ]
+                      Elem.p [] [ Text.raw "Please log in." ]
+                      Elem.a [ Attr.href "/login" ] [ Text.raw "Log in" ] ]
+            )
+        | Forbidden msg ->
+            Response.withStatusCode 403
+            >> Response.ofHtml (
+                layout
+                    "Error 403"
+                    [ Elem.h1 [ Attr.class' "error" ] [ Text.raw "403 Forbidden" ]
+                      Elem.p [] [ Text.raw msg ]
                       Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
             )
         | BadRequest msg ->
@@ -95,18 +109,31 @@ module Handlers =
             )
 
     // -------------------------------------------------------------------------
-    // Auth extractor
+    // Auth extractors
     // -------------------------------------------------------------------------
 
-    /// Extracts UserId from X-User-Id header.
+    /// Extracts UserId from ClaimsPrincipal (NameIdentifier claim).
     let requireAuth: Extractor<UserId, AppError> =
         fun ctx ->
-            match ctx.Request.Headers.TryGetValue("X-User-Id") with
-            | true, values ->
-                match Guid.TryParse(values.ToString()) with
+            match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+            | null -> Error NotAuthenticated
+            | claim ->
+                match Guid.TryParse(claim.Value) with
                 | true, guid -> Ok(UserId guid)
                 | false, _ -> Error NotAuthenticated
-            | false, _ -> Error NotAuthenticated
+
+    /// Extracts AdminId from ClaimsPrincipal (requires Admin role).
+    let requireAdmin: Extractor<AdminId, AppError> =
+        fun ctx ->
+            match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+            | null -> Error NotAuthenticated
+            | claim ->
+                if ctx.User.IsInRole("Admin") then
+                    match Guid.TryParse(claim.Value) with
+                    | true, guid -> Ok(AdminId guid)
+                    | false, _ -> Error NotAuthenticated
+                else
+                    Error(Forbidden "Admin role required.")
 
     // -------------------------------------------------------------------------
     // Individual handlers
@@ -180,7 +207,7 @@ module Handlers =
             "Public Items"
             [ ("userId", string uid) ]
             [ "[&lt;SkipAllPreconditions&gt;] — all OverridablePreCondition skipped"
-              "No X-User-Id header required for this route" ]
+              "No authentication required for this route" ]
 
     /// GET /items/{userId}/limited — SkipPrecondition(typeof<UserId>)
     let itemLimited (userId: UserId) : HttpHandler =
@@ -211,15 +238,76 @@ module Handlers =
             [ "Custom method via [&lt;Route(RouteMethod.Put, Path = \"settings\")&gt;]"
               "PreCondition&lt;UserId&gt; — auth required" ]
 
-    /// GET /dashboard — Path-less group + PreCondition
-    let dashboard (userId: UserId) : HttpHandler =
-        let (UserId uid) = userId
+    /// GET /dashboard — PreCondition<AdminId> requires Admin role
+    let dashboard (adminId: AdminId) : HttpHandler =
+        let (AdminId uid) = adminId
 
         featurePage
             "Admin Dashboard"
-            [ ("userId", string uid) ]
+            [ ("adminId", string uid) ]
             [ "Path-less group via [&lt;Route(Path = \"\")&gt;] on parent"
-              "PreCondition&lt;UserId&gt; — auth required" ]
+              "PreCondition&lt;AdminId&gt; — requires Admin role" ]
 
     /// GET /health — Default kebab-case
     let health: HttpHandler = Response.ofJson {| status = "ok" |}
+
+    // -------------------------------------------------------------------------
+    // Login/Logout handlers (auth infrastructure, outside the Route union)
+    // -------------------------------------------------------------------------
+
+    /// GET /login — simple HTML form
+    let loginPage: HttpHandler =
+        layout
+            "Log In"
+            [ Elem.h1 [] [ Text.raw "Log In" ]
+              Elem.form
+                  [ Attr.method "post"; Attr.action "/login" ]
+                  [ Elem.div
+                        []
+                        [ Elem.label [] [ Text.raw "User ID (GUID): " ]
+                          Elem.input
+                              [ Attr.type' "text"
+                                Attr.name "userId"
+                                Attr.value "11111111-1111-1111-1111-111111111111" ] ]
+                    Elem.div
+                        []
+                        [ Elem.label
+                              []
+                              [ Elem.input [ Attr.type' "checkbox"; Attr.name "isAdmin"; Attr.value "true" ]
+                                Text.raw " Admin" ] ]
+                    Elem.div [] [ Elem.input [ Attr.type' "submit"; Attr.value "Log in" ] ] ]
+              Elem.a [ Attr.href "/" ] [ Text.raw "Back to home" ] ]
+        |> Response.ofHtml
+
+    /// POST /login — creates ClaimsPrincipal and signs in with cookie auth
+    let loginSubmit: HttpHandler =
+        fun ctx ->
+            task {
+                let form = ctx.Request.Form
+                let userId = form["userId"].ToString()
+                let isAdmin = form["isAdmin"].ToString() = "true"
+
+                let claims =
+                    [ Claim(ClaimTypes.NameIdentifier, userId)
+                      if isAdmin then
+                          Claim(ClaimTypes.Role, "Admin") ]
+
+                let identity =
+                    ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme)
+
+                let principal = ClaimsPrincipal(identity)
+
+                do! ctx.SignInAsync(CookieAuthenticationDefaults.AuthenticationScheme, principal)
+
+                ctx.Response.Redirect("/")
+            }
+            :> _
+
+    /// POST /logout — signs out and redirects to home
+    let logoutSubmit: HttpHandler =
+        fun ctx ->
+            task {
+                do! ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme)
+                ctx.Response.Redirect("/")
+            }
+            :> _

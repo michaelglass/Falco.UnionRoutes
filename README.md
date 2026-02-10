@@ -69,15 +69,33 @@ type PostId = PostId of Guid
 type Route =
     | Home                                    // GET /home
     | Posts of PostRoute                      // /posts/...
+    | [<Route(Path = "")>] Admin of AdminRoute
 
 type PostRoute =
     | List of page: QueryParam<int> option    // GET /posts?page=1
     | Detail of id: PostId                    // GET /posts/{id}
     | Create of PreCondition<UserId>          // POST /posts
 
-// 2. Configure extraction (preconditions, parsers, error handling)
+type AdminRoute =
+    | Dashboard of PreCondition<AdminId>      // GET /dashboard
+
+// 2. Configure extraction — preconditions read from ctx.User (ClaimsPrincipal)
+let requireAuth : Extractor<UserId, AppError> = fun ctx ->
+    match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+    | null -> Error NotAuthenticated
+    | claim -> Ok (UserId (Guid.Parse claim.Value))
+
+let requireAdmin : Extractor<AdminId, AppError> = fun ctx ->
+    if ctx.User.IsInRole("Admin") then
+        match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+        | null -> Error NotAuthenticated
+        | claim -> Ok (AdminId (Guid.Parse claim.Value))
+    else Error (Forbidden "Admin role required")
+
 let config: EndpointConfig<AppError> = {
-    Preconditions = [ Extractor.precondition<UserId, AppError> requireAuth ]
+    Preconditions =
+        [ Extractor.precondition<UserId, AppError> requireAuth
+          Extractor.precondition<AdminId, AppError> requireAdmin ]
     Parsers = []
     MakeError = fun msg -> BadRequest msg
     CombineErrors = fun errors -> errors |> List.head
@@ -95,6 +113,7 @@ let handleRoute route : HttpHandler =
     match route with
     | Home -> Response.ofPlainText "home"
     | Posts p -> handlePost p
+    | Admin (Dashboard (PreCondition adminId)) -> Response.ofPlainText "admin"
 
 // 4. Generate endpoints - extraction happens automatically
 let endpoints = Route.endpoints config handleRoute
