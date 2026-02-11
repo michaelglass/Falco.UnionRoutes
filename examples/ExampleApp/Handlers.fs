@@ -2,6 +2,7 @@ namespace ExampleApp
 
 open System
 open System.Security.Claims
+open System.Threading.Tasks
 open Falco
 open Falco.Markup
 open Falco.UnionRoutes
@@ -15,6 +16,9 @@ open Microsoft.AspNetCore.Authentication.Cookies
 type UserId = UserId of Guid
 type AdminId = AdminId of Guid
 type Slug = Slug of string
+
+type PostInput = { Title: string; Body: string }
+type ContactInput = { Name: string; Message: string }
 
 type AppError =
     | NotAuthenticated
@@ -115,25 +119,29 @@ module Handlers =
     /// Extracts UserId from ClaimsPrincipal (NameIdentifier claim).
     let requireAuth: Extractor<UserId, AppError> =
         fun ctx ->
-            match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
-            | null -> Error NotAuthenticated
-            | claim ->
-                match Guid.TryParse(claim.Value) with
-                | true, guid -> Ok(UserId guid)
-                | false, _ -> Error NotAuthenticated
+            Task.FromResult(
+                match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+                | null -> Error NotAuthenticated
+                | claim ->
+                    match Guid.TryParse(claim.Value) with
+                    | true, guid -> Ok(UserId guid)
+                    | false, _ -> Error NotAuthenticated
+            )
 
     /// Extracts AdminId from ClaimsPrincipal (requires Admin role).
     let requireAdmin: Extractor<AdminId, AppError> =
         fun ctx ->
-            match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
-            | null -> Error NotAuthenticated
-            | claim ->
-                if ctx.User.IsInRole("Admin") then
-                    match Guid.TryParse(claim.Value) with
-                    | true, guid -> Ok(AdminId guid)
-                    | false, _ -> Error NotAuthenticated
-                else
-                    Error(Forbidden "Admin role required.")
+            Task.FromResult(
+                match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+                | null -> Error NotAuthenticated
+                | claim ->
+                    if ctx.User.IsInRole("Admin") then
+                        match Guid.TryParse(claim.Value) with
+                        | true, guid -> Ok(AdminId guid)
+                        | false, _ -> Error NotAuthenticated
+                    else
+                        Error(Forbidden "Admin role required.")
+            )
 
     // -------------------------------------------------------------------------
     // Individual handlers
@@ -149,14 +157,15 @@ module Handlers =
             [ "List convention — GET with no path segment"
               "QueryParam&lt;int&gt; option — optional query parameter" ]
 
-    /// POST /posts — Create/POST convention + PreCondition
-    let postCreate (userId: UserId) : HttpHandler =
+    /// POST /posts — Create/POST convention + JsonBody + PreCondition
+    let postCreate (input: PostInput) (userId: UserId) : HttpHandler =
         let (UserId uid) = userId
 
         featurePage
             "Post Created"
-            [ ("userId", string uid) ]
+            [ ("userId", string uid); ("title", input.Title); ("body", input.Body) ]
             [ "Create convention — POST method inferred from case name"
+              "JsonBody&lt;PostInput&gt; — request body deserialized from JSON"
               "PreCondition&lt;UserId&gt; — value extracted via precondition" ]
 
     /// GET /posts/search — Default kebab-case + required QueryParam
@@ -169,13 +178,13 @@ module Handlers =
             [ "Default kebab-case path — Search becomes /search"
               "QueryParam&lt;string&gt; — required query parameter" ]
 
-    /// GET /posts/{id} — Show convention
+    /// GET /posts/{id:guid} — Show convention with implicit :guid constraint
     let postShow (id: Guid) : HttpHandler =
         featurePage
             "Post Detail"
             [ ("id", string id) ]
             [ "Show convention — param-only path, no case-name segment"
-              "Built-in Guid extraction from route" ]
+              "Guid field → implicit :guid constraint (non-GUIDs rejected by ASP.NET Core)" ]
 
     /// GET /posts/{id}/edit — Edit convention
     let postEdit (id: Guid) : HttpHandler =
@@ -189,7 +198,7 @@ module Handlers =
     let postPatch (id: Guid) : HttpHandler =
         featurePage "Post Patched" [ ("id", string id) ] [ "Patch convention — PATCH method inferred from case name" ]
 
-    /// GET /items/{userId} — inherits OverridablePreCondition
+    /// GET /items/{userId:guid} — inherits OverridablePreCondition
     let itemList (userId: UserId) : HttpHandler =
         let (UserId uid) = userId
 
@@ -197,7 +206,7 @@ module Handlers =
             "Item List"
             [ ("userId", string uid) ]
             [ "OverridablePreCondition&lt;UserId&gt; — precondition inherited from parent"
-              "Single-case DU wrapper — UserId of Guid in path" ]
+              "Single-case DU wrapper — UserId of Guid → implicit :guid constraint" ]
 
     /// GET /items/{userId}/public — SkipAllPreconditions
     let itemPublic (userId: UserId) : HttpHandler =
@@ -218,7 +227,7 @@ module Handlers =
             [ ("userId", string uid) ]
             [ "[&lt;SkipPrecondition(typeof&lt;UserId&gt;)&gt;] — skips only OverridablePreCondition&lt;UserId&gt;" ]
 
-    /// GET /articles/{slug} — Custom path + custom parser
+    /// GET /articles/{slug:alpha} — Custom path + constrained parser
     let article (slug: Slug) : HttpHandler =
         let (Slug s) = slug
 
@@ -226,7 +235,8 @@ module Handlers =
             "Article"
             [ ("slug", s) ]
             [ "Custom path via [&lt;Route(Path = \"articles/{slug}\")&gt;]"
-              "Custom parser via Extractor.parser" ]
+              "Extractor.constrainedParser adds :alpha constraint at endpoint registration"
+              "ASP.NET Core rejects non-alpha slugs before handler runs" ]
 
     /// PUT /settings — Custom method + custom path + PreCondition
     let updateSettings (userId: UserId) : HttpHandler =
@@ -248,8 +258,22 @@ module Handlers =
             [ "Path-less group via [&lt;Route(Path = \"\")&gt;] on parent"
               "PreCondition&lt;AdminId&gt; — requires Admin role" ]
 
-    /// GET /health — Default kebab-case
-    let health: HttpHandler = Response.ofJson {| status = "ok" |}
+    /// POST /contact — FormBody extraction
+    let contactSubmit (input: ContactInput) : HttpHandler =
+        featurePage
+            "Contact Submitted"
+            [ ("name", input.Name); ("message", input.Message) ]
+            [ "FormBody&lt;ContactInput&gt; — request body deserialized from form data"
+              "Create convention — POST method inferred from case name" ]
+
+    /// GET /tag/{name:alpha:minlength(3):maxlength(50)} — Explicit attribute constraints
+    let tag (name: string) : HttpHandler =
+        featurePage
+            "Tag"
+            [ ("name", name) ]
+            [ "[&lt;Route(Constraints = [| Alpha |], MinLength = 3, MaxLength = 50)&gt;]"
+              "Multiple constraints combined: :alpha:minlength(3):maxlength(50)"
+              "ASP.NET Core rejects non-alpha, too-short, or too-long values" ]
 
     // -------------------------------------------------------------------------
     // Login/Logout handlers (auth infrastructure, outside the Route union)

@@ -1,7 +1,11 @@
 namespace Falco.UnionRoutes
 
 open System
+open System.Collections.Generic
+open System.Text.Json
+open System.Text.Json.Serialization
 open System.Text.RegularExpressions
+open System.Threading.Tasks
 open Falco
 open Falco.Routing
 open Microsoft.AspNetCore.Http
@@ -45,15 +49,19 @@ type HttpMethod =
 
 /// <summary>Attribute to specify route metadata on union cases.</summary>
 /// <remarks>
-/// Use this attribute to override the default HTTP method or path for a route case.
-/// Convention-based routing works without attributes for common patterns.
+/// <para>Use this attribute to override the default HTTP method, path, or constraints for a route case.
+/// Convention-based routing works without attributes for common patterns.</para>
+/// <para>Type-based constraints (<c>:guid</c>, <c>:int</c>, <c>:long</c>, <c>:bool</c>) are applied
+/// automatically from field types. Use <c>Constraints</c>, <c>MinLength</c>, <c>MaxLength</c>,
+/// <c>MinValue</c>, <c>MaxValue</c>, and <c>Pattern</c> for additional constraints.</para>
 /// </remarks>
 /// <example>
 /// <code>
 /// type UserRoute =
 ///     | [&lt;Route(RouteMethod.Get, Path = "users")&gt;] List
-///     | [&lt;Route(RouteMethod.Get, Path = "users/{id}")&gt;] Detail of id: Guid
 ///     | [&lt;Route(RouteMethod.Post, Path = "users")&gt;] Create
+///     | [&lt;Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)&gt;]
+///       Tag of name: string                             // {name:alpha:minlength(3):maxlength(50)}
 /// </code>
 /// </example>
 [<AttributeUsage(AttributeTargets.Property, AllowMultiple = false)>]
@@ -198,6 +206,21 @@ module Route =
         && t.GetGenericArguments().[0].IsGenericType
         && t.GetGenericArguments().[0].GetGenericTypeDefinition() = typedefof<QueryParam<_>>
 
+    /// Check if a type is Returns<'T> (response type marker - should not be in route path)
+    let private isReturnsType (t: Type) =
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Returns<_>>
+
+    /// Check if a type is JsonBody<'T> (JSON body marker - should not be in route path)
+    let private isJsonBodyType (t: Type) =
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<JsonBody<_>>
+
+    /// Check if a type is FormBody<'T> (form body marker - should not be in route path)
+    let private isFormBodyType (t: Type) =
+        t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<FormBody<_>>
+
+    /// Check if a type is any body marker type
+    let private isBodyType (t: Type) = isJsonBodyType t || isFormBodyType t
+
     /// Supported primitive types for route/query extraction
     let private supportedPrimitives =
         [ typeof<Guid>; typeof<string>; typeof<int>; typeof<int64>; typeof<bool> ]
@@ -220,6 +243,8 @@ module Route =
         && not (isOptionalPreconditionType t)
         && not (isQueryType t)
         && not (isOptionalQueryType t)
+        && not (isReturnsType t)
+        && not (isBodyType t)
         && not (isSingleCaseWrapper t)
 
     /// Check if a field should be excluded from route path
@@ -229,6 +254,44 @@ module Route =
         || isOptionalPreconditionType f.PropertyType
         || isQueryType f.PropertyType
         || isOptionalQueryType f.PropertyType
+        || isReturnsType f.PropertyType
+        || isBodyType f.PropertyType
+
+    // =========================================================================
+    // Active patterns for field type classification
+    // =========================================================================
+
+    /// Partial active pattern: matches nested route union types.
+    let private (|NestedRouteUnion|_|) (t: Type) =
+        if isNestedRouteUnion t then Some() else None
+
+    /// Partial active pattern: matches OverridablePreCondition<'T> types.
+    let private (|OptPreconditionField|_|) (t: Type) =
+        if isOptionalPreconditionType t then Some() else None
+
+    /// Partial active pattern: matches Returns<'T> types.
+    let private (|ReturnsField|_|) (t: Type) =
+        if isReturnsType t then Some() else None
+
+    /// Partial active pattern: matches JsonBody<'T> types.
+    let private (|JsonBodyField|_|) (t: Type) =
+        if isJsonBodyType t then Some() else None
+
+    /// Partial active pattern: matches FormBody<'T> types.
+    let private (|FormBodyField|_|) (t: Type) =
+        if isFormBodyType t then Some() else None
+
+    /// Partial active pattern for RESTful empty-segment names.
+    let private (|EmptySegmentName|_|) =
+        function
+        | "Root"
+        | "List"
+        | "Show"
+        | "Member"
+        | "Create"
+        | "Delete"
+        | "Patch" -> Some()
+        | _ -> None
 
     // =========================================================================
     // Route constraint helpers
@@ -295,13 +358,7 @@ module Route =
     /// List, Show, Create etc. are "invisible" in the URL path.
     let private isEmptySegmentName (caseName: string) : bool =
         match caseName with
-        | "Root"
-        | "List"
-        | "Show"
-        | "Member"
-        | "Create"
-        | "Delete"
-        | "Patch" -> true
+        | EmptySegmentName -> true
         | _ -> false
 
     /// Infer path segment from case fields
@@ -323,9 +380,9 @@ module Route =
                     |> Array.map (fun f -> "{" + f.Name + getConstraintSuffix case f + "}")
                     |> String.concat "/"
 
-                match isEmptySegmentName case.Name with
-                | true -> Some paramPath
-                | false -> Some(toKebabCase case.Name + "/" + paramPath)
+                match case.Name with
+                | EmptySegmentName -> Some paramPath
+                | _ -> Some(toKebabCase case.Name + "/" + paramPath)
 
     /// Apply implicit type constraints and explicit attribute constraints to bare {paramName} in explicit paths
     let private applyConstraintsToExplicitPath (case: UnionCaseInfo) (path: string) : string =
@@ -360,10 +417,9 @@ module Route =
             match inferPathFromFields case with
             | Some path -> path
             | None ->
-                if isEmptySegmentName case.Name then
-                    ""
-                else
-                    toKebabCase case.Name
+                match case.Name with
+                | EmptySegmentName -> ""
+                | _ -> toKebabCase case.Name
 
     /// Get HTTP method from a case's RouteAttribute
     let private getMethod (case: UnionCaseInfo) : HttpMethod =
@@ -385,7 +441,11 @@ module Route =
         let method = getMethod case
 
         let nestedUnionField =
-            case.GetFields() |> Array.tryFind (fun f -> isNestedRouteUnion f.PropertyType)
+            case.GetFields()
+            |> Array.tryFind (fun f ->
+                match f.PropertyType with
+                | NestedRouteUnion -> true
+                | _ -> false)
 
         match nestedUnionField with
         | Some fieldInfo ->
@@ -524,6 +584,25 @@ module Route =
             "/" + String.concat "/" segments
 
     // =========================================================================
+    // Public API - Typed Responses
+    // =========================================================================
+
+    /// <summary>Sends a JSON response with the type guaranteed by <c>Returns&lt;'T&gt;</c>.</summary>
+    /// <typeparam name="T">The response type declared in the route.</typeparam>
+    /// <param name="_returns">The <c>Returns&lt;'T&gt;</c> phantom value from the route match — binds the response type.</param>
+    /// <param name="value">The value to serialize as JSON.</param>
+    /// <returns>An HTTP handler that writes the JSON response.</returns>
+    /// <example>
+    /// <code>
+    /// let handle route : HttpHandler =
+    ///     match route with
+    ///     | List returns -> Route.respond returns (Fortune.all ())
+    ///     | Show (id, returns) -> Route.respond returns (Fortune.find id)
+    /// </code>
+    /// </example>
+    let inline respond (_returns: Returns<'T>) (value: 'T) : HttpHandler = Response.ofJson value
+
+    // =========================================================================
     // Public API - Route Enumeration
     // =========================================================================
 
@@ -537,6 +616,13 @@ module Route =
             box 0
         elif t = typeof<int64> then
             box 0L
+        elif isReturnsType t then
+            Activator.CreateInstance(t)
+        elif isBodyType t then
+            let innerType = t.GetGenericArguments().[0]
+            let innerDefault = getDefaultValue innerType
+            let case = FSharpType.GetUnionCases(t).[0]
+            FSharpValue.MakeUnion(case, [| innerDefault |])
         elif isSingleCaseWrapper t then
             let case = FSharpType.GetUnionCases(t).[0]
             let innerDefault = getDefaultValue (case.GetFields().[0].PropertyType)
@@ -680,8 +766,22 @@ module Route =
         let path = getPathSegment case
         let nestedCount = countNestedRouteUnions case
 
+        let bodyFieldCount =
+            case.GetFields()
+            |> Array.filter (fun f -> isBodyType f.PropertyType)
+            |> Array.length
+
+        let hasNestedRouteUnion =
+            case.GetFields() |> Array.exists (fun f -> isNestedRouteUnion f.PropertyType)
+
         [ if nestedCount > 1 then
               $"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)"
+
+          if bodyFieldCount > 1 then
+              $"Case '{case.Name}' has {bodyFieldCount} body fields (at most 1 JsonBody or FormBody allowed per case)"
+
+          if bodyFieldCount > 0 && hasNestedRouteUnion then
+              $"Case '{case.Name}' has both a body field and a nested route union (body stream can only be read once)"
 
           yield! validatePathChars path
           yield! validateBalancedBraces path
@@ -1235,7 +1335,7 @@ module Route =
     // =========================================================================
 
     /// Recursive hydration helper that works with obj types for reflection-based traversal.
-    /// Returns Result<obj, 'E> where the obj is the hydrated route value.
+    /// Returns Task<Result<obj, 'E>> where the obj is the hydrated route value.
     let rec private hydrateValue<'E>
         (preconditions: PreconditionExtractor<'E> list)
         (parsers: FieldParser list)
@@ -1244,71 +1344,117 @@ module Route =
         (leafCaseInfo: UnionCaseInfo)
         (value: obj)
         (ctx: HttpContext)
-        : Result<obj, 'E> =
+        : Task<Result<obj, 'E>> =
 
         let valueType = value.GetType()
 
         if not (FSharpType.IsUnion(valueType)) then
-            Ok value
+            Task.FromResult(Ok value)
         else
             let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
             let fields = caseInfo.GetFields()
 
             if fields.Length = 0 then
-                Ok value
+                Task.FromResult(Ok value)
             else
-                let hasParser fieldType =
-                    parsers |> List.exists (fun p -> p.ForType = fieldType)
+                task {
+                    let hasParser fieldType =
+                        parsers |> List.exists (fun p -> p.ForType = fieldType)
 
-                let fieldResults =
-                    fields
-                    |> Array.mapi (fun i field ->
-                        if isNestedRouteUnion field.PropertyType && not (hasParser field.PropertyType) then
-                            // Recursively hydrate nested route unions
-                            match
-                                hydrateValue
-                                    preconditions
-                                    parsers
-                                    makeError
-                                    combineErrors
-                                    leafCaseInfo
-                                    fieldValues.[i]
-                                    ctx
-                            with
-                            | Ok hydratedNested -> FromExtraction(Ok hydratedNested)
-                            | Error e -> FromPrecondition(Error e) // Use FromPrecondition to pass through 'E directly
-                        elif
-                            tryGetOptPreInfo field.PropertyType
-                            |> Option.exists (fun innerType -> shouldSkipOptPrecondition leafCaseInfo innerType)
-                        then
-                            FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
-                        else
-                            match findPrecondition preconditions field.PropertyType with
-                            | Some precondition -> FromPrecondition(precondition.Extract ctx)
-                            | None -> FromExtraction(extractField parsers field.Name field.PropertyType ctx))
+                    let! fieldResults =
+                        fields
+                        |> Array.mapi (fun i field ->
+                            task {
+                                match field.PropertyType with
+                                | NestedRouteUnion when not (hasParser field.PropertyType) ->
+                                    let! result =
+                                        hydrateValue
+                                            preconditions
+                                            parsers
+                                            makeError
+                                            combineErrors
+                                            leafCaseInfo
+                                            fieldValues.[i]
+                                            ctx
 
-                let allErrors =
-                    fieldResults
-                    |> Array.choose (function
-                        | FromPrecondition(Error e) -> Some e
-                        | FromExtraction(Error e) -> Some(makeError e)
-                        | FromPrecondition(Ok _) -> None
-                        | FromExtraction(Ok _) -> None)
-                    |> Array.toList
+                                    match result with
+                                    | Ok hydratedNested -> return FromExtraction(Ok hydratedNested)
+                                    | Error e -> return FromPrecondition(Error e)
+                                | ReturnsField -> return FromExtraction(Ok(getDefaultValue field.PropertyType))
+                                | JsonBodyField ->
+                                    try
+                                        let innerType = field.PropertyType.GetGenericArguments().[0]
 
-                if allErrors.Length > 0 then
-                    Error(combineErrors allErrors)
-                else
-                    let values =
+                                        let! body =
+                                            JsonSerializer.DeserializeAsync(
+                                                ctx.Request.Body,
+                                                innerType,
+                                                cancellationToken = ctx.RequestAborted
+                                            )
+
+                                        let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                        return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
+                                    with ex ->
+                                        return FromExtraction(Error $"Failed to read JSON body: {ex.Message}")
+                                | FormBodyField ->
+                                    try
+                                        let innerType = field.PropertyType.GetGenericArguments().[0]
+                                        let! form = ctx.Request.ReadFormAsync(ctx.RequestAborted)
+                                        let jsonDict = Dictionary<string, obj>()
+
+                                        for kvp in form do
+                                            let sv = kvp.Value
+                                            jsonDict.[kvp.Key] <- string sv
+
+                                        let options = JsonSerializerOptions()
+
+                                        options.NumberHandling <- JsonNumberHandling.AllowReadingFromString
+
+                                        let json = JsonSerializer.Serialize(jsonDict)
+                                        let body = JsonSerializer.Deserialize(json, innerType, options)
+                                        let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                        return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
+                                    with ex ->
+                                        return FromExtraction(Error $"Failed to read form body: {ex.Message}")
+                                | OptPreconditionField when
+                                    tryGetOptPreInfo field.PropertyType
+                                    |> Option.exists (fun innerType ->
+                                        shouldSkipOptPrecondition leafCaseInfo innerType)
+                                    ->
+                                    return FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
+                                | _ ->
+                                    match findPrecondition preconditions field.PropertyType with
+                                    | Some precondition ->
+                                        let! result = precondition.Extract ctx
+                                        return FromPrecondition(result)
+                                    | None ->
+                                        return FromExtraction(extractField parsers field.Name field.PropertyType ctx)
+                            })
+                        |> Task.WhenAll
+
+                    let allErrors =
                         fieldResults
-                        |> Array.map (function
-                            | FromPrecondition(Ok v) -> v
-                            | FromExtraction(Ok v) -> v
-                            | FromPrecondition(Error _) -> failwith "unreachable"
-                            | FromExtraction(Error _) -> failwith "unreachable")
+                        |> Array.choose (function
+                            | FromPrecondition(Error e) -> Some e
+                            | FromExtraction(Error e) -> Some(makeError e)
+                            | FromPrecondition(Ok _) -> None
+                            | FromExtraction(Ok _) -> None)
+                        |> Array.toList
 
-                    let hydrated = FSharpValue.MakeUnion(caseInfo, values)
-                    Ok hydrated
+                    if allErrors.Length > 0 then
+                        return Error(combineErrors allErrors)
+                    else
+                        let values =
+                            fieldResults
+                            |> Array.map (function
+                                | FromPrecondition(Ok v) -> v
+                                | FromExtraction(Ok v) -> v
+                                | FromPrecondition(Error _) -> failwith "unreachable"
+                                | FromExtraction(Error _) -> failwith "unreachable")
+
+                        let hydrated = FSharpValue.MakeUnion(caseInfo, values)
+                        return Ok hydrated
+                }
 
     /// Creates an extraction function that populates route fields from HTTP context.
     /// Internal - used by Route.endpoints. Hydration is recursive.
@@ -1320,11 +1466,15 @@ module Route =
         : 'Route -> Extractor<'Route, 'E> =
 
         let hydrateRoute route ctx =
-            let leafCaseInfo = findLeafCaseInfo (box route)
+            task {
+                let leafCaseInfo = findLeafCaseInfo (box route)
 
-            match hydrateValue preconditions parsers makeError combineErrors leafCaseInfo (box route) ctx with
-            | Ok hydratedObj -> Ok(hydratedObj :?> 'Route)
-            | Error e -> Error e
+                let! result = hydrateValue preconditions parsers makeError combineErrors leafCaseInfo (box route) ctx
+
+                match result with
+                | Ok hydratedObj -> return Ok(hydratedObj :?> 'Route)
+                | Error e -> return Error e
+            }
 
         fun route -> hydrateRoute route
 
@@ -1341,56 +1491,54 @@ module Route =
 
         implicit' + explicit'
 
+    /// Collect path field names and types from a specific route value by walking the union hierarchy
+    let rec private collectPathFields (value: obj) : (string * Type) list =
+        let valueType = value.GetType()
+
+        if not (FSharpType.IsUnion(valueType)) then
+            []
+        else
+            let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+            let fields = case.GetFields()
+
+            let pathFields =
+                fields
+                |> Array.filter (fun f -> not (isNonRouteField f))
+                |> Array.map (fun f -> (f.Name, f.PropertyType))
+                |> Array.toList
+
+            let nestedFields =
+                fields
+                |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+                |> Option.map (fun idx -> collectPathFields fieldValues.[idx])
+                |> Option.defaultValue []
+
+            pathFields @ nestedFields
+
     /// Post-process a route path to add parser-derived constraints to bare params
-    let private applyParserConstraints (parsers: FieldParser list) (routeType: Type) (path: string) : string =
+    let private applyParserConstraints (parsers: FieldParser list) (routeValue: obj) (path: string) : string =
         if parsers.IsEmpty then
             path
         else
-            let rec getPathFields (unionType: Type) (value: obj) : (string * Type) list =
-                if not (FSharpType.IsUnion(unionType)) then
-                    []
-                else
-                    let case, fieldValues = FSharpValue.GetUnionFields(value, unionType)
-                    let fields = case.GetFields()
+            let pathFields = collectPathFields routeValue
 
-                    let pathFields =
-                        fields
-                        |> Array.filter (fun f -> not (isNonRouteField f))
-                        |> Array.map (fun f -> (f.Name, f.PropertyType))
-                        |> Array.toList
+            (path, pathFields)
+            ||> List.fold (fun p (fieldName, fieldType) ->
+                match parsers |> List.tryFind (fun parser -> parser.ForType = fieldType) with
+                | None -> p
+                | Some parser ->
+                    let suffix = parserConstraintSuffix parser
 
-                    let nestedFields =
-                        fields
-                        |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
-                        |> Option.map (fun idx -> getPathFields fields.[idx].PropertyType fieldValues.[idx])
-                        |> Option.defaultValue []
+                    if suffix = "" then
+                        p
+                    else
+                        // Only add to bare {fieldName} (no existing constraint)
+                        let barePattern = @"\{" + Regex.Escape(fieldName) + @"\}"
 
-                    pathFields @ nestedFields
-
-            // We need to iterate all route values to apply per-field parser constraints
-            let allValues = enumerateUnionValues routeType
-
-            (path, allValues)
-            ||> List.fold (fun currentPath value ->
-                let pathFields = getPathFields routeType value
-
-                (currentPath, pathFields)
-                ||> List.fold (fun p (fieldName, fieldType) ->
-                    match parsers |> List.tryFind (fun parser -> parser.ForType = fieldType) with
-                    | None -> p
-                    | Some parser ->
-                        let suffix = parserConstraintSuffix parser
-
-                        if suffix = "" then
-                            p
+                        if Regex.IsMatch(p, barePattern) then
+                            Regex.Replace(p, barePattern, "{" + fieldName + suffix + "}")
                         else
-                            // Only add to bare {fieldName} (no existing constraint)
-                            let barePattern = @"\{" + Regex.Escape(fieldName) + @"\}"
-
-                            if Regex.IsMatch(p, barePattern) then
-                                Regex.Replace(p, barePattern, "{" + fieldName + suffix + "}")
-                            else
-                                p))
+                            p)
 
     /// <summary>Generates Falco endpoints with automatic route extraction.</summary>
     /// <typeparam name="TRoute">The route union type.</typeparam>
@@ -1449,7 +1597,7 @@ module Route =
         allRoutes<'TRoute> ()
         |> List.map (fun route ->
             let routeInfo = info route
-            let path = applyParserConstraints config.Parsers typeof<'TRoute> routeInfo.Path
+            let path = applyParserConstraints config.Parsers (box route) routeInfo.Path
             let handler = Extraction.run config.ToErrorResponse (hydrate route) routeHandler
             let sortKey = parsePathSegments path
             (sortKey, path, toFalcoMethod routeInfo.Method path handler))

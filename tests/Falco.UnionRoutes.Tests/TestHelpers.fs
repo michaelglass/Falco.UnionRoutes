@@ -1,6 +1,7 @@
 module Falco.UnionRoutes.Tests.TestHelpers
 
 open System
+open System.Threading.Tasks
 open Falco
 open Microsoft.AspNetCore.Http
 open Falco.UnionRoutes
@@ -29,12 +30,18 @@ let requireSomeWith errorFn opt =
 /// Short-circuits on the first error.
 let (<&>) (e1: Extractor<'a, 'e>) (e2: Extractor<'b, 'e>) : Extractor<'a * 'b, 'e> =
     fun ctx ->
-        match e1 ctx with
-        | Error e -> Error e
-        | Ok a ->
-            match e2 ctx with
-            | Error e -> Error e
-            | Ok b -> Ok(a, b)
+        task {
+            let! r1 = e1 ctx
+
+            match r1 with
+            | Error e -> return Error e
+            | Ok a ->
+                let! r2 = e2 ctx
+
+                match r2 with
+                | Error e -> return Error e
+                | Ok b -> return Ok(a, b)
+        }
 
 // =========================================================================
 // Route Parameter Helpers
@@ -51,7 +58,11 @@ let tryGetRouteGuid (ctx: HttpContext) (paramName: string) : Guid option =
 
 /// Require a GUID route parameter, mapping to a typed ID.
 let requireRouteId<'TId, 'E> (paramName: string) (constructor: Guid -> 'TId) (error: 'E) : Extractor<'TId, 'E> =
-    fun ctx -> tryGetRouteGuid ctx paramName |> Option.map constructor |> requireSome error
+    fun ctx ->
+        tryGetRouteGuid ctx paramName
+        |> Option.map constructor
+        |> requireSome error
+        |> Task.FromResult
 
 /// Require a string route parameter.
 let requireRouteStr<'E> (paramName: string) (error: 'E) : Extractor<string, 'E> =
@@ -59,10 +70,11 @@ let requireRouteStr<'E> (paramName: string) (error: 'E) : Extractor<string, 'E> 
         let route = Request.getRoute ctx
         let value = route.GetString paramName
 
-        if String.IsNullOrEmpty(value) then
-            Error error
-        else
-            Ok value
+        (if String.IsNullOrEmpty(value) then
+             Error error
+         else
+             Ok value)
+        |> Task.FromResult
 
 /// Require an int route parameter.
 let requireRouteInt<'E> (paramName: string) (error: 'E) : Extractor<int, 'E> =
@@ -70,9 +82,10 @@ let requireRouteInt<'E> (paramName: string) (error: 'E) : Extractor<int, 'E> =
         let route = Request.getRoute ctx
         let value = route.GetString paramName
 
-        match Int32.TryParse(value) with
-        | true, i -> Ok i
-        | false, _ -> Error error
+        (match Int32.TryParse(value) with
+         | true, i -> Ok i
+         | false, _ -> Error error)
+        |> Task.FromResult
 
 /// Require an int route parameter with dynamic error.
 let requireRouteIntWith<'E> (paramName: string) (errorFn: unit -> 'E) : Extractor<int, 'E> =
@@ -80,9 +93,15 @@ let requireRouteIntWith<'E> (paramName: string) (errorFn: unit -> 'E) : Extracto
         let route = Request.getRoute ctx
         let value = route.GetString paramName
 
-        match Int32.TryParse(value) with
-        | true, i -> Ok i
-        | false, _ -> Error(errorFn ())
+        (match Int32.TryParse(value) with
+         | true, i -> Ok i
+         | false, _ -> Error(errorFn ()))
+        |> Task.FromResult
 
 /// Ignore extractor result (useful for validation-only checks)
-let ignoreResult (e: Extractor<'a, 'e>) : Extractor<unit, 'e> = fun ctx -> e ctx |> Result.map ignore
+let ignoreResult (e: Extractor<'a, 'e>) : Extractor<unit, 'e> =
+    fun ctx ->
+        task {
+            let! result = e ctx
+            return result |> Result.map ignore
+        }

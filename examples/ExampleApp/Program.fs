@@ -23,7 +23,7 @@ type PostDetailRoute =
 
 type PostRoute =
     | List of page: QueryParam<int> option
-    | Create of PreCondition<UserId>
+    | Create of JsonBody<PostInput> * PreCondition<UserId>
     | Search of query: QueryParam<string>
     | Member of id: Guid * PostDetailRoute
 
@@ -34,6 +34,8 @@ type ItemRoute =
 
 type AdminRoute = Dashboard of PreCondition<AdminId>
 
+type HealthResponse = { Status: string }
+
 type Route =
     | Root
     | Posts of PostRoute
@@ -41,7 +43,9 @@ type Route =
     | [<Route(RouteMethod.Put, Path = "settings")>] UpdateSettings of PreCondition<UserId>
     | Items of userId: UserId * OverridablePreCondition<UserId> * ItemRoute
     | [<Route(Path = "")>] Admin of AdminRoute
-    | Health
+    | [<Route(RouteMethod.Post, Path = "contact")>] Contact of FormBody<ContactInput>
+    | Health of Returns<HealthResponse>
+    | [<Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)>] Tag of name: string
 
 // =============================================================================
 // Custom parser
@@ -84,6 +88,7 @@ let makeBrowsable (route: Route) (path: string) =
         |> replaceParam "id" (sampleId.ToString())
         |> replaceParam "userId" (sampleId.ToString())
         |> replaceParam "slug" "hello-world"
+        |> replaceParam "name" "fsharp"
 
     match route with
     | Posts(Search _) -> path + "?query=hello"
@@ -144,10 +149,11 @@ let home: HttpHandler =
               []
               [ Text.raw
                     $"""Route.link Root = "{Route.link Root}"
-Route.link Health = "{Route.link Health}"
+Route.link (Health(Returns())) = "{Route.link (Health(Returns()))}"
 Route.link (Posts (Member ({sampleId}, Show))) = "{Route.link (Posts(Member(sampleId, Show)))}"
 Route.link (Article (Slug "hello-world")) = "{Route.link (Article(Slug "hello-world"))}"
-Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}), List)) = "{Route.link (Items(UserId sampleId, OverridablePreCondition(UserId sampleId), ItemRoute.List))}" """ ]
+Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}), List)) = "{Route.link (Items(UserId sampleId, OverridablePreCondition(UserId sampleId), ItemRoute.List))}"
+Route.link (Tag "fsharp") = "{Route.link (Tag "fsharp")}" """ ]
 
           // curl examples
           Elem.h2 [] [ Text.raw "Try with curl" ]
@@ -157,8 +163,8 @@ Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}
                     $"""# Log in first (creates auth cookie)
 curl -c cookies.txt -X POST http://localhost:5000/login -d "userId={sampleId}&isAdmin=true"
 
-# Create post (requires auth cookie)
-curl -b cookies.txt -X POST http://localhost:5000/posts
+# Create post (requires auth cookie + JSON body)
+curl -b cookies.txt -X POST http://localhost:5000/posts -H "Content-Type: application/json" -d '{{"Title":"Hello","Body":"World"}}'
 
 # Update settings (PUT, requires auth)
 curl -b cookies.txt -X PUT http://localhost:5000/settings
@@ -167,7 +173,10 @@ curl -b cookies.txt -X PUT http://localhost:5000/settings
 curl -X DELETE http://localhost:5000/posts/{sampleId}
 
 # Patch post
-curl -X PATCH http://localhost:5000/posts/{sampleId}" """ ] ]
+curl -X PATCH http://localhost:5000/posts/{sampleId}
+
+# Submit contact form (FormBody extraction)
+curl -X POST http://localhost:5000/contact -d "Name=Alice&Message=Hello" """ ] ]
     |> Response.ofHtml
 
 // =============================================================================
@@ -184,7 +193,7 @@ let handlePostDetail (id: Guid) (route: PostDetailRoute) : HttpHandler =
 let handlePost (route: PostRoute) : HttpHandler =
     match route with
     | PostRoute.List page -> Handlers.postList page
-    | PostRoute.Create(PreCondition userId) -> Handlers.postCreate userId
+    | PostRoute.Create(JsonBody input, PreCondition userId) -> Handlers.postCreate input userId
     | PostRoute.Search query -> Handlers.postSearch query
     | PostRoute.Member(id, detail) -> handlePostDetail id detail
 
@@ -202,7 +211,9 @@ let handleRoute (route: Route) : HttpHandler =
     | Route.UpdateSettings(PreCondition userId) -> Handlers.updateSettings userId
     | Route.Items(userId, _, itemRoute) -> handleItem userId itemRoute
     | Route.Admin(AdminRoute.Dashboard(PreCondition adminId)) -> Handlers.dashboard adminId
-    | Route.Health -> Handlers.health
+    | Route.Contact(FormBody input) -> Handlers.contactSubmit input
+    | Route.Health returns -> Route.respond returns { Status = "ok" }
+    | Route.Tag name -> Handlers.tag name
 
 // =============================================================================
 // Entry point
