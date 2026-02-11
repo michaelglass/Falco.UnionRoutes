@@ -133,8 +133,9 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 |--------------------------------------|--------------------|--------------------------|
 | `Health`                             | `/health`          | kebab-case from name     |
 | `DigestView`                         | `/digest-view`     | kebab-case from name     |
-| `Detail of id: Guid`                 | `/{id}`            | field name -> path param |
-| `Edit of a: Guid * b: Guid`          | `/{a}/{b}`         | multiple path params     |
+| `Detail of id: Guid`                 | `/{id:guid}`       | field name -> path param + type constraint |
+| `ByPage of page: int`                | `/{page:int}`      | int -> `:int` constraint |
+| `Edit of a: Guid * b: Guid`          | `/{a:guid}/{b:guid}` | multiple path params   |
 | `Posts of PostRoute`                 | `/posts/...`       | nested DU -> path prefix |
 | `[<Route(Path = "")>] Api of ApiRoute` | `/...`           | path-less group          |
 
@@ -157,6 +158,25 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 [<Route(RouteMethod.Put)>]                           // just method
 [<Route(Path = "custom/{id}")>]                      // just path
 [<Route(RouteMethod.Put, Path = "custom/{id}")>]     // both
+[<Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)>]  // constraints
+```
+
+**Implicit type constraints** — applied automatically based on field types:
+
+| Field Type | Constraint | Example Path |
+|-----------|------------|-------------|
+| `Guid` | `:guid` | `{id:guid}` |
+| `int` | `:int` | `{page:int}` |
+| `int64` | `:long` | `{id:long}` |
+| `bool` | `:bool` | `{enabled:bool}` |
+| `string` | (none) | `{name}` |
+| Single-case DU (e.g. `PostId of Guid`) | inner type's constraint | `{id:guid}` |
+
+**Parser constraints** — applied by `Route.endpoints` when custom parsers declare constraints:
+
+```fsharp
+Extractor.constrainedParser<Slug> [| RouteConstraint.Alpha |] parseFn  // adds :alpha
+Extractor.typedParser<bool, ToggleState> parseFn                       // adds :bool (from input type)
 ```
 <!-- sync:conventions:end -->
 
@@ -269,9 +289,11 @@ Route.validate<Route, Error> preconditions               // Full validation (for
   ToErrorResponse = fun e -> ... }   // Error -> HTTP response
 
 // Extractor module - create extractors for EndpointConfig
-Extractor.precondition<UserId, Error> extractFn           // For PreCondition<UserId> fields
+Extractor.precondition<UserId, Error> extractFn              // For PreCondition<UserId> fields
 Extractor.overridablePrecondition<AdminId, Error> extractFn  // For OverridablePreCondition<AdminId>
-Extractor.parser<Slug> parseFn                            // For custom types in route/query params
+Extractor.parser<Slug> parseFn                               // For custom types (string input)
+Extractor.constrainedParser<Slug> [| Alpha |] parseFn        // String parser + route constraints
+Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pre-parsed input)
 ```
 <!-- sync:keyfunctions:end -->
 

@@ -6,6 +6,7 @@ open Falco
 open Falco.Markup
 open Falco.Routing
 open Falco.UnionRoutes
+open System.Text.RegularExpressions
 open Microsoft.AspNetCore.Authentication.Cookies
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
@@ -46,7 +47,8 @@ type Route =
 // Custom parser
 // =============================================================================
 
-let slugParser: Parser<Slug> = fun s -> Ok(Slug s)
+let slugParser =
+    Extractor.constrainedParser<Slug> [| RouteConstraint.Alpha |] (fun s -> Ok(Slug s))
 
 // =============================================================================
 // Endpoint configuration
@@ -57,7 +59,7 @@ let endpointConfig: EndpointConfig<AppError> =
         [ Extractor.precondition<UserId, AppError> Handlers.requireAuth
           Extractor.overridablePrecondition<UserId, AppError> Handlers.requireAuth
           Extractor.precondition<AdminId, AppError> Handlers.requireAdmin ]
-      Parsers = [ Extractor.parser slugParser ]
+      Parsers = [ slugParser ]
       MakeError = fun msg -> BadRequest msg
       CombineErrors =
         fun errors ->
@@ -72,13 +74,16 @@ let endpointConfig: EndpointConfig<AppError> =
 
 let sampleId = Guid.Parse("11111111-1111-1111-1111-111111111111")
 
-/// Replace {param} placeholders with sample values for browsable links
+/// Replace {param} or {param:constraint} placeholders with sample values for browsable links
 let makeBrowsable (route: Route) (path: string) =
+    let replaceParam (name: string) (value: string) (p: string) =
+        Regex.Replace(p, @"\{" + Regex.Escape(name) + @"(:[^}]*)?\}", value)
+
     let path =
         path
-            .Replace("{id}", sampleId.ToString())
-            .Replace("{userId}", sampleId.ToString())
-            .Replace("{slug}", "hello-world")
+        |> replaceParam "id" (sampleId.ToString())
+        |> replaceParam "userId" (sampleId.ToString())
+        |> replaceParam "slug" "hello-world"
 
     match route with
     | Posts(Search _) -> path + "?query=hello"

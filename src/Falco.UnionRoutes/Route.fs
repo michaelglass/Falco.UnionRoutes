@@ -75,6 +75,30 @@ type RouteAttribute(method: RouteMethod) =
     /// </value>
     member val Path: string = null with get, set
 
+    /// <summary>Gets or sets explicit route constraints applied to all path fields.</summary>
+    /// <value>Array of parameterless constraints (e.g., Alpha). Null means no explicit constraints.</value>
+    member val Constraints: RouteConstraint[] = null with get, set
+
+    /// <summary>Gets or sets the minimum string length constraint.</summary>
+    /// <value>Minimum length, or -1 (default) for no constraint.</value>
+    member val MinLength: int = -1 with get, set
+
+    /// <summary>Gets or sets the maximum string length constraint.</summary>
+    /// <value>Maximum length, or -1 (default) for no constraint.</value>
+    member val MaxLength: int = -1 with get, set
+
+    /// <summary>Gets or sets the minimum integer value constraint.</summary>
+    /// <value>Minimum value, or Int32.MinValue (default) for no constraint.</value>
+    member val MinValue: int = System.Int32.MinValue with get, set
+
+    /// <summary>Gets or sets the maximum integer value constraint.</summary>
+    /// <value>Maximum value, or Int32.MaxValue (default) for no constraint.</value>
+    member val MaxValue: int = System.Int32.MaxValue with get, set
+
+    /// <summary>Gets or sets a regex pattern constraint.</summary>
+    /// <value>Regex pattern string, or null (default) for no constraint.</value>
+    member val Pattern: string = null with get, set
+
 // =============================================================================
 // Route Module
 // =============================================================================
@@ -207,6 +231,63 @@ module Route =
         || isOptionalQueryType f.PropertyType
 
     // =========================================================================
+    // Route constraint helpers
+    // =========================================================================
+
+    /// Returns the ASP.NET Core constraint suffix for a field type (e.g., ":guid", ":int")
+    let rec private implicitConstraintForType (fieldType: Type) : string =
+        if fieldType = typeof<Guid> then
+            ":guid"
+        elif fieldType = typeof<int> then
+            ":int"
+        elif fieldType = typeof<int64> then
+            ":long"
+        elif fieldType = typeof<bool> then
+            ":bool"
+        elif isSingleCaseWrapper fieldType then
+            let innerType = FSharpType.GetUnionCases(fieldType).[0].GetFields().[0].PropertyType
+            implicitConstraintForType innerType
+        else
+            ""
+
+    /// Renders a RouteConstraint enum value as an ASP.NET Core constraint suffix
+    let private renderConstraint (c: RouteConstraint) : string =
+        match c with
+        | RouteConstraint.Alpha -> ":alpha"
+        | RouteConstraint.Required -> ":required"
+        | RouteConstraint.File -> ":file"
+        | RouteConstraint.NonFile -> ":nonfile"
+        | _ -> ""
+
+    /// Reads explicit constraints from a Route attribute and renders them as constraint suffixes
+    let private getExplicitConstraints (case: UnionCaseInfo) : string =
+        match getRouteAttr case with
+        | None -> ""
+        | Some attr ->
+            let parts =
+                [ if not (isNull attr.Constraints) then
+                      for c in attr.Constraints do
+                          renderConstraint c
+                  if attr.MinLength >= 0 then
+                      $":minlength({attr.MinLength})"
+                  if attr.MaxLength >= 0 then
+                      $":maxlength({attr.MaxLength})"
+                  if attr.MinValue > System.Int32.MinValue then
+                      $":min({attr.MinValue})"
+                  if attr.MaxValue < System.Int32.MaxValue then
+                      $":max({attr.MaxValue})"
+                  if not (isNull attr.Pattern) then
+                      $":regex({attr.Pattern})" ]
+
+            parts |> String.concat ""
+
+    /// Combines implicit type constraint + explicit attribute constraints for a field
+    let private getConstraintSuffix (case: UnionCaseInfo) (f: Reflection.PropertyInfo) : string =
+        let implicit' = implicitConstraintForType f.PropertyType
+        let explicit' = getExplicitConstraints case
+        implicit' + explicit'
+
+    // =========================================================================
     // Path and method inference
     // =========================================================================
 
@@ -238,16 +319,43 @@ module Route =
                 None
             else
                 let paramPath =
-                    pathFields |> Array.map (fun f -> "{" + f.Name + "}") |> String.concat "/"
+                    pathFields
+                    |> Array.map (fun f -> "{" + f.Name + getConstraintSuffix case f + "}")
+                    |> String.concat "/"
 
                 match isEmptySegmentName case.Name with
                 | true -> Some paramPath
                 | false -> Some(toKebabCase case.Name + "/" + paramPath)
 
+    /// Apply implicit type constraints and explicit attribute constraints to bare {paramName} in explicit paths
+    let private applyConstraintsToExplicitPath (case: UnionCaseInfo) (path: string) : string =
+        let fields = case.GetFields() |> Array.filter (fun f -> not (isNonRouteField f))
+
+        (path, fields)
+        ||> Array.fold (fun p f ->
+            // Match {fieldName} that doesn't already have a colon (constraint)
+            let barePattern = @"\{" + Regex.Escape(f.Name) + @"\}"
+            let constraintedPattern = @"\{" + Regex.Escape(f.Name) + @":"
+
+            if Regex.IsMatch(p, constraintedPattern) then
+                // Already has constraints, add only explicit attribute constraints
+                let explicit' = getExplicitConstraints case
+
+                if explicit' = "" then
+                    p
+                else
+                    let existingPattern = @"\{(" + Regex.Escape(f.Name) + @"(?::[^}]*))\}"
+                    Regex.Replace(p, existingPattern, "{${1}" + explicit' + "}")
+            elif Regex.IsMatch(p, barePattern) then
+                let suffix = getConstraintSuffix case f
+                Regex.Replace(p, barePattern, "{" + f.Name + suffix + "}")
+            else
+                p)
+
     /// Get path segment from a case
     let private getPathSegment (case: UnionCaseInfo) : string =
         match getRouteAttr case |> Option.bind getAttrPath with
-        | Some path -> path
+        | Some path -> applyConstraintsToExplicitPath case path
         | None ->
             match inferPathFromFields case with
             | Some path -> path
@@ -381,7 +489,7 @@ module Route =
                                 | null -> ""
                                 | v -> v.ToString()
 
-                            seg.Replace("{" + f.Name + "}", valueStr))
+                            Regex.Replace(seg, @"\{" + Regex.Escape(f.Name) + @"(:[^}]*)?\}", valueStr))
                         segmentPattern
 
             match nestedUnionFieldIndex with
@@ -496,7 +604,7 @@ module Route =
 
     let private validatePathChars (path: string) : string list =
         let invalidChars =
-            path.Replace("{", "").Replace("}", "")
+            Regex.Replace(path, @"\{[^}]*\}", "")
             |> Seq.filter (fun c -> not (Set.contains c validPathChars))
             |> Seq.distinct
             |> Seq.toList
@@ -522,7 +630,7 @@ module Route =
             [ $"Unbalanced braces in path '{path}'" ]
 
     let private extractPathParams (path: string) : string list =
-        Regex.Matches(path, @"\{([^}]+)\}")
+        Regex.Matches(path, @"\{([^:}]+)(?::[^}]*)?\}")
         |> Seq.cast<Match>
         |> Seq.map (fun m -> m.Groups.[1].Value)
         |> Seq.toList
@@ -925,12 +1033,17 @@ module Route =
         parsers
         |> List.tryFind (fun p -> p.ForType = fieldType)
         |> Option.map (fun parser ->
-            let value = getRouteString ctx fieldName
+            let rawString = getRouteString ctx fieldName
 
-            if String.IsNullOrEmpty(value) then
+            if String.IsNullOrEmpty(rawString) then
                 Error $"Missing route parameter: {fieldName}"
+            elif parser.InputType = typeof<string> then
+                parser.Parse(box rawString)
             else
-                parser.Parse value)
+                match tryParsePrimitive parser.InputType rawString fieldName RouteParam with
+                | Some(Ok typedValue) -> parser.Parse typedValue
+                | Some(Error msg) -> Error msg
+                | None -> Error $"Cannot parse '{rawString}' as {parser.InputType.Name} for field '{fieldName}'")
 
     let private extractRequired
         (parsers: FieldParser list)
@@ -1144,10 +1257,13 @@ module Route =
             if fields.Length = 0 then
                 Ok value
             else
+                let hasParser fieldType =
+                    parsers |> List.exists (fun p -> p.ForType = fieldType)
+
                 let fieldResults =
                     fields
                     |> Array.mapi (fun i field ->
-                        if isNestedRouteUnion field.PropertyType then
+                        if isNestedRouteUnion field.PropertyType && not (hasParser field.PropertyType) then
                             // Recursively hydrate nested route unions
                             match
                                 hydrateValue
@@ -1216,6 +1332,66 @@ module Route =
     // Public API - Falco Integration
     // =========================================================================
 
+    /// Compute constraint suffix from a parser (implicit from InputType + explicit constraints)
+    let private parserConstraintSuffix (parser: FieldParser) : string =
+        let implicit' = implicitConstraintForType parser.InputType
+
+        let explicit' =
+            parser.ExplicitConstraints |> Array.map renderConstraint |> String.concat ""
+
+        implicit' + explicit'
+
+    /// Post-process a route path to add parser-derived constraints to bare params
+    let private applyParserConstraints (parsers: FieldParser list) (routeType: Type) (path: string) : string =
+        if parsers.IsEmpty then
+            path
+        else
+            let rec getPathFields (unionType: Type) (value: obj) : (string * Type) list =
+                if not (FSharpType.IsUnion(unionType)) then
+                    []
+                else
+                    let case, fieldValues = FSharpValue.GetUnionFields(value, unionType)
+                    let fields = case.GetFields()
+
+                    let pathFields =
+                        fields
+                        |> Array.filter (fun f -> not (isNonRouteField f))
+                        |> Array.map (fun f -> (f.Name, f.PropertyType))
+                        |> Array.toList
+
+                    let nestedFields =
+                        fields
+                        |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+                        |> Option.map (fun idx -> getPathFields fields.[idx].PropertyType fieldValues.[idx])
+                        |> Option.defaultValue []
+
+                    pathFields @ nestedFields
+
+            // We need to iterate all route values to apply per-field parser constraints
+            let allValues = enumerateUnionValues routeType
+
+            (path, allValues)
+            ||> List.fold (fun currentPath value ->
+                let pathFields = getPathFields routeType value
+
+                (currentPath, pathFields)
+                ||> List.fold (fun p (fieldName, fieldType) ->
+                    match parsers |> List.tryFind (fun parser -> parser.ForType = fieldType) with
+                    | None -> p
+                    | Some parser ->
+                        let suffix = parserConstraintSuffix parser
+
+                        if suffix = "" then
+                            p
+                        else
+                            // Only add to bare {fieldName} (no existing constraint)
+                            let barePattern = @"\{" + Regex.Escape(fieldName) + @"\}"
+
+                            if Regex.IsMatch(p, barePattern) then
+                                Regex.Replace(p, barePattern, "{" + fieldName + suffix + "}")
+                            else
+                                p))
+
     /// <summary>Generates Falco endpoints with automatic route extraction.</summary>
     /// <typeparam name="TRoute">The route union type.</typeparam>
     /// <typeparam name="E">The error type for extraction failures.</typeparam>
@@ -1273,9 +1449,10 @@ module Route =
         allRoutes<'TRoute> ()
         |> List.map (fun route ->
             let routeInfo = info route
+            let path = applyParserConstraints config.Parsers typeof<'TRoute> routeInfo.Path
             let handler = Extraction.run config.ToErrorResponse (hydrate route) routeHandler
-            let sortKey = parsePathSegments routeInfo.Path
-            (sortKey, routeInfo.Path, toFalcoMethod routeInfo.Method routeInfo.Path handler))
+            let sortKey = parsePathSegments path
+            (sortKey, path, toFalcoMethod routeInfo.Method path handler))
         |> List.sortBy (fun (sortKey, path, _) ->
             (sortKey
              |> List.map (function

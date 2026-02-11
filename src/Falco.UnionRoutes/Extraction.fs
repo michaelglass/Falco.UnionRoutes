@@ -110,6 +110,27 @@ type SkipPreconditionAttribute(preconditionType: Type) =
     member _.PreconditionType = preconditionType
 
 // =========================================================================
+// Route Constraint Types
+// =========================================================================
+
+/// <summary>ASP.NET Core parameterless route constraint kinds.</summary>
+/// <remarks>
+/// <para>Type-based constraints (e.g., <c>:guid</c>, <c>:int</c>, <c>:bool</c>, <c>:long</c>) are
+/// derived implicitly from field types and do not appear in this enum.</para>
+/// <para>Use with <see cref="T:Falco.UnionRoutes.RouteAttribute"/> or
+/// <see cref="M:Falco.UnionRoutes.Extraction.Extractor.constrainedParser``1"/> to add constraints to route parameters.</para>
+/// </remarks>
+type RouteConstraint =
+    /// <summary>Matches alphabetic characters only (a-z, A-Z).</summary>
+    | Alpha = 0
+    /// <summary>Matches non-empty values.</summary>
+    | Required = 1
+    /// <summary>Matches values that look like file names (contain a dot).</summary>
+    | File = 2
+    /// <summary>Matches values that do not look like file names.</summary>
+    | NonFile = 3
+
+// =========================================================================
 // Extraction Module
 // =========================================================================
 
@@ -181,10 +202,14 @@ module Extraction =
     [<NoComparison; NoEquality>]
     type FieldParser =
         {
-            /// The type this parser handles (e.g., typeof<Slug>)
+            /// The output type this parser produces (e.g., typeof<Slug>)
             ForType: Type
-            /// Parse a string into the target type
-            Parse: string -> Result<obj, string>
+            /// The input type the parser expects (typeof<string> for plain parsers, typeof<bool> for typed, etc.)
+            InputType: Type
+            /// Parse input value (boxed InputType) into the target type
+            Parse: obj -> Result<obj, string>
+            /// Explicit route constraints declared by this parser (e.g., [| Alpha |])
+            ExplicitConstraints: RouteConstraint[]
         }
 
     /// <summary>Registers an extractor for PreCondition or OverridablePreCondition fields.</summary>
@@ -316,7 +341,41 @@ module Extraction =
         /// </remarks>
         let parser<'T> (parser: Parser<'T>) : FieldParser =
             { ForType = typeof<'T>
-              Parse = fun s -> parser s |> Result.map box }
+              InputType = typeof<string>
+              Parse = fun o -> parser (o :?> string) |> Result.map box
+              ExplicitConstraints = [||] }
+
+        /// <summary>Registers a typed parser where the input type determines the implicit route constraint.</summary>
+        /// <typeparam name="TInput">The input type (e.g., bool → :bool constraint, int → :int).</typeparam>
+        /// <typeparam name="TOutput">The output type this parser produces.</typeparam>
+        /// <param name="parser">Function that converts the pre-parsed typed value into the target type.</param>
+        /// <returns>A FieldParser for EndpointConfig.</returns>
+        /// <remarks>
+        /// <para>The parser receives a pre-parsed typed value (not a raw string) because the ASP.NET Core
+        /// route constraint guarantees the format. For example, a <c>typedParser&lt;bool, ToggleState&gt;</c>
+        /// receives a <c>bool</c> value since the <c>:bool</c> constraint ensures only valid booleans reach the handler.</para>
+        /// </remarks>
+        let typedParser<'TInput, 'TOutput> (parser: 'TInput -> Result<'TOutput, string>) : FieldParser =
+            { ForType = typeof<'TOutput>
+              InputType = typeof<'TInput>
+              Parse = fun o -> parser (o :?> 'TInput) |> Result.map box
+              ExplicitConstraints = [||] }
+
+        /// <summary>Registers a string parser with explicit route constraints.</summary>
+        /// <typeparam name="T">The output type this parser produces.</typeparam>
+        /// <param name="constraints">ASP.NET Core route constraints to apply (e.g., Alpha).</param>
+        /// <param name="parser">Function that parses a string into the target type.</param>
+        /// <returns>A FieldParser for EndpointConfig.</returns>
+        /// <remarks>
+        /// <para>Use this when you want ASP.NET Core to validate the route parameter before your parser runs.
+        /// For example, <c>constrainedParser&lt;Slug&gt; [| RouteConstraint.Alpha |] slugParser</c> adds an
+        /// <c>:alpha</c> constraint so only alphabetic values reach the parser.</para>
+        /// </remarks>
+        let constrainedParser<'T> (constraints: RouteConstraint[]) (parser: Parser<'T>) : FieldParser =
+            { ForType = typeof<'T>
+              InputType = typeof<string>
+              Parse = fun o -> parser (o :?> string) |> Result.map box
+              ExplicitConstraints = constraints }
 
     // =========================================================================
     // Extractor Execution (internal - used by Route.endpoints)
