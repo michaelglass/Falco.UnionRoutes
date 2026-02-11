@@ -1,6 +1,7 @@
 module Falco.UnionRoutes.Tests.RouteTests
 
 open System
+open System.Threading.Tasks
 open Xunit
 open Swensen.Unquote
 open Falco.UnionRoutes
@@ -1032,6 +1033,24 @@ let ``explicit path - existing constraints are preserved`` () =
     test <@ info.Path = "/posts/{id:guid}" @>
 
 // =============================================================================
+// Explicit path with manual constraints (user takes full control)
+// =============================================================================
+
+type ExplicitPathManualConstraints = | [<Route(Path = "items/{id:required}")>] Detail of id: Guid
+
+[<Fact>]
+let ``explicit path - user-provided constraints are not overwritten by implicit`` () =
+    // User wrote {id:required} for a Guid field — we don't add :guid on top
+    let info = Route.info (ExplicitPathManualConstraints.Detail Guid.Empty)
+    test <@ info.Path = "/items/{id:required}" @>
+
+[<Fact>]
+let ``explicit path - link generation works with user-provided constraints`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+    let url = Route.link (ExplicitPathManualConstraints.Detail id)
+    test <@ url = "/items/12345678-1234-1234-1234-123456789abc" @>
+
+// =============================================================================
 // Validation with constrained paths tests
 // =============================================================================
 
@@ -1044,3 +1063,179 @@ let ``validateStructure passes for constrained routes`` () =
 let ``validateStructure passes for implicit constraint routes`` () =
     let result = Route.validateStructure<GuidParamRoute> ()
     test <@ result = Ok() @>
+
+[<Fact>]
+let ``validateStructure passes for explicit path with manual constraints`` () =
+    let result = Route.validateStructure<ExplicitPathManualConstraints> ()
+    test <@ result = Ok() @>
+
+// =============================================================================
+// Returns<'T> marker type tests
+// =============================================================================
+
+type Fortune = { Message: string }
+
+type ReturnsRoute =
+    | List of Returns<Fortune list>
+    | Show of id: Guid * Returns<Fortune>
+    | Create of PreCondition<AdminUserId> * Returns<Fortune>
+    | Plain
+
+[<Fact>]
+let ``Returns field excluded from path`` () =
+    let info = Route.info (ReturnsRoute.Show(Guid.Empty, Returns()))
+    test <@ info.Path = "/{id:guid}" @>
+
+[<Fact>]
+let ``Returns field does not affect method inference`` () =
+    let info = Route.info (ReturnsRoute.List(Returns()))
+    test <@ info.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``Returns field excluded from path with PreCondition`` () =
+    let info =
+        Route.info (ReturnsRoute.Create(PreCondition(AdminUserId Guid.Empty), Returns()))
+
+    test <@ info.Method = HttpMethod.Post @>
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``allRoutes enumerates correctly with Returns fields`` () =
+    let routes = Route.allRoutes<ReturnsRoute> ()
+    test <@ List.length routes = 4 @>
+
+[<Fact>]
+let ``link generation ignores Returns field`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+    let url = Route.link (ReturnsRoute.Show(id, Returns()))
+    test <@ url = "/12345678-1234-1234-1234-123456789abc" @>
+
+[<Fact>]
+let ``validateStructure passes for routes with Returns`` () =
+    let result = Route.validateStructure<ReturnsRoute> ()
+    test <@ result = Ok() @>
+
+type NestedReturnsChild =
+    | List of Returns<Fortune list>
+    | Show of id: Guid * Returns<Fortune>
+
+type NestedReturnsParent = Items of NestedReturnsChild
+
+[<Fact>]
+let ``Returns works correctly in nested routes`` () =
+    let info =
+        Route.info (NestedReturnsParent.Items(NestedReturnsChild.Show(Guid.Empty, Returns())))
+
+    test <@ info.Path = "/items/{id:guid}" @>
+
+[<Fact>]
+let ``allRoutes enumerates nested routes with Returns`` () =
+    let routes = Route.allRoutes<NestedReturnsParent> ()
+    test <@ List.length routes = 2 @>
+
+// =============================================================================
+// JsonBody<'T> / FormBody<'T> marker type tests
+// =============================================================================
+
+type PostInput = { Title: string; Body: string }
+
+type LoginInput = { Username: string; Password: string }
+
+type JsonBodyRoute =
+    | Create of JsonBody<PostInput>
+    | CreateWithAuth of JsonBody<PostInput> * PreCondition<AdminUserId>
+    | CreateWithIdAndBody of id: Guid * JsonBody<PostInput>
+    | CreateWithReturns of JsonBody<PostInput> * Returns<Fortune>
+
+type FormBodyRoute =
+    | Submit of FormBody<LoginInput>
+    | SubmitWithAuth of FormBody<LoginInput> * PreCondition<AdminUserId>
+
+[<Fact>]
+let ``JsonBody field excluded from path`` () =
+    let info = Route.info (JsonBodyRoute.Create(JsonBody { Title = ""; Body = "" }))
+    test <@ info.Path = "/" @>
+
+[<Fact>]
+let ``JsonBody does not affect method inference`` () =
+    let info = Route.info (JsonBodyRoute.Create(JsonBody { Title = ""; Body = "" }))
+    test <@ info.Method = HttpMethod.Post @>
+
+[<Fact>]
+let ``JsonBody excluded from path with PreCondition`` () =
+    let info =
+        Route.info (
+            JsonBodyRoute.CreateWithAuth(JsonBody { Title = ""; Body = "" }, PreCondition(AdminUserId Guid.Empty))
+        )
+
+    test <@ info.Method = HttpMethod.Get @>
+    test <@ info.Path = "/create-with-auth" @>
+
+[<Fact>]
+let ``JsonBody excluded from path with Guid param`` () =
+    let info =
+        Route.info (JsonBodyRoute.CreateWithIdAndBody(Guid.Empty, JsonBody { Title = ""; Body = "" }))
+
+    test <@ info.Path = "/create-with-id-and-body/{id:guid}" @>
+
+[<Fact>]
+let ``FormBody field excluded from path`` () =
+    let info =
+        Route.info (FormBodyRoute.Submit(FormBody { Username = ""; Password = "" }))
+
+    test <@ info.Path = "/submit" @>
+
+[<Fact>]
+let ``allRoutes enumerates correctly with JsonBody fields`` () =
+    let routes = Route.allRoutes<JsonBodyRoute> ()
+    test <@ List.length routes = 4 @>
+
+[<Fact>]
+let ``allRoutes enumerates correctly with FormBody fields`` () =
+    let routes = Route.allRoutes<FormBodyRoute> ()
+    test <@ List.length routes = 2 @>
+
+[<Fact>]
+let ``validateStructure passes for routes with JsonBody`` () =
+    let result = Route.validateStructure<JsonBodyRoute> ()
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``validateStructure passes for routes with FormBody`` () =
+    let result = Route.validateStructure<FormBodyRoute> ()
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``link generation ignores JsonBody field`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+
+    let url =
+        Route.link (JsonBodyRoute.CreateWithIdAndBody(id, JsonBody { Title = ""; Body = "" }))
+
+    test <@ url = "/create-with-id-and-body/12345678-1234-1234-1234-123456789abc" @>
+
+// --- Validation: multiple body fields ---
+
+type InvalidMultiBodyRoute = Bad of JsonBody<PostInput> * FormBody<LoginInput>
+
+[<Fact>]
+let ``validateStructure rejects multiple body fields per case`` () =
+    let result = Route.validateStructure<InvalidMultiBodyRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("body fields")) @>
+    | Ok() -> failwith "Expected validation error for multiple body fields"
+
+// --- Validation: body + nested route union ---
+
+type SomeChildRoute = | ChildList
+
+type InvalidBodyWithNestedRoute = Bad of JsonBody<PostInput> * SomeChildRoute
+
+[<Fact>]
+let ``validateStructure rejects body field with nested route union`` () =
+    let result = Route.validateStructure<InvalidBodyWithNestedRoute> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route union")) @>
+    | Ok() -> failwith "Expected validation error for body + nested route union"

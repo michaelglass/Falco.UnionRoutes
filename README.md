@@ -5,19 +5,19 @@ Define your routes as F# discriminated unions. Get exhaustive pattern matching, 
 
 ```fsharp
 type PostRoute =
-    | List of page: QueryParam<int> option    // GET /posts?page=1
-    | Detail of id: PostId                    // GET /posts/{id}
-    | Create of PreCondition<UserId>          // POST /posts
+    | List of page: QueryParam<int> option           // GET /posts?page=1
+    | Detail of id: PostId                           // GET /posts/{id}
+    | Create of JsonBody<PostInput> * PreCondition<UserId>  // POST /posts (JSON body + auth)
 
 let handlePost route : HttpHandler =
     match route with
     | List page -> Response.ofJson (getPosts page)
     | Detail postId -> Response.ofJson (getPost postId)
-    | Create (PreCondition userId) -> Response.ofJson (createPost userId)
+    | Create (JsonBody input, PreCondition userId) -> Response.ofJson (createPost userId input)
 ```
 
 **What you get:**
-- Compiler enforces you handle every route
+- automatic extraction, parsing of query params. Handlers don't need to parse query params or check if user is logged in, etc.
 - `Route.link (Detail postId)` -> `"/posts/abc-123"` (type-checked)
 - Route/query params and auth automatically extracted based on field types
 <!-- sync:intro:end -->
@@ -51,6 +51,8 @@ Special marker types change where values come from:
 | Create of PreCondition<UserId>                    // UserId from auth extractor, not URL
 | Edit of PreCondition<UserId> * id: Guid           // auth + route param
 | Admin of OverridablePreCondition<AdminId> * data  // skippable precondition (child routes can opt out)
+| Create of JsonBody<PostInput> * PreCondition<UserId>  // JSON body + auth
+| Submit of FormBody<LoginInput>                    // form-encoded body
 ```
 
 Single-case wrapper DUs are auto-unwrapped:
@@ -71,26 +73,30 @@ type Route =
     | Posts of PostRoute                      // /posts/...
     | [<Route(Path = "")>] Admin of AdminRoute
 
+type PostInput = { Title: string; Body: string }
+
 type PostRoute =
-    | List of page: QueryParam<int> option    // GET /posts?page=1
-    | Detail of id: PostId                    // GET /posts/{id}
-    | Create of PreCondition<UserId>          // POST /posts
+    | List of page: QueryParam<int> option              // GET /posts?page=1
+    | Detail of id: PostId                              // GET /posts/{id}
+    | Create of JsonBody<PostInput> * PreCondition<UserId>  // POST /posts (JSON body + auth)
 
 type AdminRoute =
     | Dashboard of PreCondition<AdminId>      // GET /dashboard
 
-// 2. Configure extraction — preconditions read from ctx.User (ClaimsPrincipal)
+// 2. Configure extraction — extractors are async (HttpContext -> Task<Result<'T, 'E>>)
 let requireAuth : Extractor<UserId, AppError> = fun ctx ->
-    match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
-    | null -> Error NotAuthenticated
-    | claim -> Ok (UserId (Guid.Parse claim.Value))
-
-let requireAdmin : Extractor<AdminId, AppError> = fun ctx ->
-    if ctx.User.IsInRole("Admin") then
+    Task.FromResult(
         match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
         | null -> Error NotAuthenticated
-        | claim -> Ok (AdminId (Guid.Parse claim.Value))
-    else Error (Forbidden "Admin role required")
+        | claim -> Ok (UserId (Guid.Parse claim.Value)))
+
+let requireAdmin : Extractor<AdminId, AppError> = fun ctx ->
+    Task.FromResult(
+        if ctx.User.IsInRole("Admin") then
+            match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+            | null -> Error NotAuthenticated
+            | claim -> Ok (AdminId (Guid.Parse claim.Value))
+        else Error (Forbidden "Admin role required"))
 
 let config: EndpointConfig<AppError> = {
     Preconditions =
@@ -107,7 +113,7 @@ let handlePost route : HttpHandler =
     match route with
     | List page -> Response.ofJson (getPosts page)
     | Detail postId -> Response.ofJson (getPost postId)
-    | Create (PreCondition userId) -> Response.ofJson (createPost userId)
+    | Create (JsonBody input, PreCondition userId) -> Response.ofJson (createPost userId input)
 
 let handleRoute route : HttpHandler =
     match route with
@@ -159,6 +165,8 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 [<Route(Path = "custom/{id}")>]                      // just path
 [<Route(RouteMethod.Put, Path = "custom/{id}")>]     // both
 [<Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)>]  // constraints
+[<Route(MinValue = 1, MaxValue = 100)>]              // integer range
+[<Route(Pattern = @"^\d{3}-\d{4}$")>]               // regex pattern
 ```
 
 **Implicit type constraints** — applied automatically based on field types:
@@ -172,12 +180,16 @@ See [`examples/ExampleApp/Program.fs`](examples/ExampleApp/Program.fs) for a com
 | `string` | (none) | `{name}` |
 | Single-case DU (e.g. `PostId of Guid`) | inner type's constraint | `{id:guid}` |
 
+Implicit and explicit constraints combine: a `Guid` field with `[<Route(Constraints = [| Required |])>]` produces `{id:guid:required}`.
+
 **Parser constraints** — applied by `Route.endpoints` when custom parsers declare constraints:
 
 ```fsharp
 Extractor.constrainedParser<Slug> [| RouteConstraint.Alpha |] parseFn  // adds :alpha
 Extractor.typedParser<bool, ToggleState> parseFn                       // adds :bool (from input type)
 ```
+
+Parser constraints are applied at endpoint registration time. `Route.info` and `Route.link` reflect only type-based constraints since they don't require `EndpointConfig`.
 <!-- sync:conventions:end -->
 
 <!-- sync:markertypes:start -->
@@ -189,6 +201,9 @@ Extractor.typedParser<bool, ToggleState> parseFn                       // adds :
 | `QueryParam<'T> option` | Optional query | missing -> `None` |
 | `PreCondition<'T>` | Precondition extractor | auth, validation (strict) |
 | `OverridablePreCondition<'T>` | Skippable precondition | child routes can opt out |
+| `Returns<'T>` | Response type metadata | `Route.respond returns value` |
+| `JsonBody<'T>` | JSON request body | deserialized via `System.Text.Json` |
+| `FormBody<'T>` | Form-encoded body | form fields mapped to record |
 <!-- sync:markertypes:end -->
 
 <!-- sync:preconditions:start -->
@@ -221,10 +236,10 @@ type PostDetailRoute =
     | Patch                                        // PATCH  /posts/{id}
 
 type PostRoute =
-    | List of page: QueryParam<int> option         // GET    /posts?page=1
-    | Create of PreCondition<UserId>               // POST   /posts
-    | Search of query: QueryParam<string>          // GET    /posts/search?query=hello
-    | Member of id: Guid * PostDetailRoute         //        /posts/{id}/...
+    | List of page: QueryParam<int> option                 // GET    /posts?page=1
+    | Create of JsonBody<PostInput> * PreCondition<UserId> // POST   /posts (JSON body + auth)
+    | Search of query: QueryParam<string>                  // GET    /posts/search?query=hello
+    | Member of id: Guid * PostDetailRoute                 //        /posts/{id}/...
 ```
 
 `Member` produces a param-only path (no case-name prefix). `Show`/`Delete`/`Patch` collapse to the same path with different methods. `Edit` produces `/edit`.
@@ -244,6 +259,8 @@ type PostRoute =
 | Duplicate path params | `[<Route(Path = "{id}/sub/{id}")>]` | Duplicate path parameters |
 | Param/field mismatch | `[<Route(Path = "{userId}")>] Profile of id: Guid` | Path params not found in fields |
 | Multiple nested unions | `Both of ChildA * ChildB` | Case has 2 nested route unions (max 1) |
+| Multiple body fields | `Bad of JsonBody<A> * FormBody<B>` | At most 1 body field per case |
+| Body + nested union | `Bad of JsonBody<A> * ChildRoute` | Body field cannot coexist with nested route |
 
 **Uniqueness errors** (checked by `Route.validate` and `Route.endpoints`):
 
@@ -274,6 +291,7 @@ let ``all routes are valid`` () =
 ```fsharp
 // Route module
 Route.endpoints config handler       // Generate endpoints with extraction (main entry point)
+Route.respond returns value          // Type-safe JSON response via Returns<'T>
 Route.link route                     // Type-safe URL: "/posts/abc-123"
 Route.info route                     // RouteInfo with Method and Path
 Route.allRoutes<Route>()             // Enumerate all routes
@@ -289,8 +307,11 @@ Route.validate<Route, Error> preconditions               // Full validation (for
   ToErrorResponse = fun e -> ... }   // Error -> HTTP response
 
 // Extractor module - create extractors for EndpointConfig
+// Extractors are async: Extractor<'T,'E> = HttpContext -> Task<Result<'T,'E>>
 Extractor.precondition<UserId, Error> extractFn              // For PreCondition<UserId> fields
+Extractor.preconditionSync<UserId, Error> syncExtractFn      // Sync convenience wrapper
 Extractor.overridablePrecondition<AdminId, Error> extractFn  // For OverridablePreCondition<AdminId>
+Extractor.overridablePreconditionSync<AdminId, Error> syncFn // Sync convenience wrapper
 Extractor.parser<Slug> parseFn                               // For custom types (string input)
 Extractor.constrainedParser<Slug> [| Alpha |] parseFn        // String parser + route constraints
 Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pre-parsed input)

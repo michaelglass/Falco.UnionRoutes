@@ -1,6 +1,7 @@
 namespace Falco.UnionRoutes
 
 open System
+open System.Threading.Tasks
 open Falco
 open Microsoft.AspNetCore.Http
 
@@ -66,6 +67,75 @@ type PreCondition<'T> = PreCondition of 'T
 /// </example>
 /// <seealso cref="T:Falco.UnionRoutes.PreCondition`1"/>
 type OverridablePreCondition<'T> = OverridablePreCondition of 'T
+
+/// <summary>Response type marker. Carries type info at compile time for API metadata; holds no runtime data.</summary>
+/// <typeparam name="T">The response type this route returns.</typeparam>
+/// <remarks>
+/// <para>Use <c>Returns&lt;'T&gt;</c> to declare what a route handler returns. The value is excluded from
+/// path, query, and precondition extraction — it exists only so reflection can discover the response type.</para>
+/// <para>Use <c>Route.respond</c> to send the response with the correct type.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type FortuneRoute =
+///     | List of Returns&lt;Fortune list&gt;
+///     | Show of id: Guid * Returns&lt;Fortune&gt;
+///
+/// let handle route : HttpHandler =
+///     match route with
+///     | List returns -> Route.respond returns (Fortune.all ())
+///     | Show (id, returns) -> Route.respond returns (Fortune.find id)
+/// </code>
+/// </example>
+[<Sealed>]
+type Returns<'T>() =
+    /// <summary>All Returns instances with the same type parameter are equal (phantom type).</summary>
+    override _.Equals(other) = other :? Returns<'T>
+
+    /// <summary>Constant hash code (phantom type with no data).</summary>
+    override _.GetHashCode() = 0
+
+/// <summary>Marks a route field as coming from a JSON request body.</summary>
+/// <typeparam name="T">The type to deserialize from the JSON body.</typeparam>
+/// <remarks>
+/// <para>The body is deserialized using <c>System.Text.Json</c> with default options.</para>
+/// <para>At most one body marker (<c>JsonBody&lt;'T&gt;</c> or <c>FormBody&lt;'T&gt;</c>) is allowed per route case.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type PostInput = { Title: string; Body: string }
+///
+/// type PostRoute =
+///     | Create of JsonBody&lt;PostInput&gt; * PreCondition&lt;UserId&gt;
+///
+/// let handle route : HttpHandler =
+///     match route with
+///     | Create (JsonBody input, PreCondition userId) ->
+///         Response.ofJson (createPost userId input)
+/// </code>
+/// </example>
+type JsonBody<'T> = JsonBody of 'T
+
+/// <summary>Marks a route field as coming from a form-encoded request body.</summary>
+/// <typeparam name="T">The type to extract from form fields.</typeparam>
+/// <remarks>
+/// <para>Form fields are converted to JSON then deserialized into the target type.
+/// Numeric strings are handled via <c>JsonNumberHandling.AllowReadingFromString</c>.</para>
+/// <para>At most one body marker (<c>JsonBody&lt;'T&gt;</c> or <c>FormBody&lt;'T&gt;</c>) is allowed per route case.</para>
+/// </remarks>
+/// <example>
+/// <code>
+/// type LoginInput = { Username: string; Password: string }
+///
+/// type AuthRoute =
+///     | Login of FormBody&lt;LoginInput&gt;
+///
+/// let handle route : HttpHandler =
+///     match route with
+///     | Login (FormBody input) -> authenticate input
+/// </code>
+/// </example>
+type FormBody<'T> = FormBody of 'T
 
 // =========================================================================
 // Precondition Skip Attributes (at namespace level for easy access)
@@ -164,22 +234,27 @@ module Extraction =
     /// </example>
     type Parser<'T> = string -> Result<'T, string>
 
-    /// <summary>Extracts a value from HTTP context. Used for authentication, authorization,
-    /// reading headers, cookies, or any value that requires request context.</summary>
+    /// <summary>Asynchronously extracts a value from HTTP context. Used for authentication, authorization,
+    /// reading headers, cookies, database lookups, or any value that requires request context.</summary>
     /// <typeparam name="T">The type to extract.</typeparam>
     /// <typeparam name="E">The error type on failure.</typeparam>
     /// <example>
     /// <code>
     /// let requireAuth: Extractor&lt;UserId, AppError&gt; = fun ctx ->
-    ///     match ctx.Request.Headers.TryGetValue("X-User-Id") with
-    ///     | true, values ->
-    ///         match Guid.TryParse(values.ToString()) with
-    ///         | true, guid -> Ok (UserId guid)
-    ///         | _ -> Error NotAuthenticated
-    ///     | _ -> Error NotAuthenticated
+    ///     task {
+    ///         match ctx.User.FindFirst(ClaimTypes.NameIdentifier) with
+    ///         | null -> return Error NotAuthenticated
+    ///         | claim -> return Ok (UserId (Guid.Parse claim.Value))
+    ///     }
     /// </code>
     /// </example>
-    type Extractor<'T, 'E> = HttpContext -> Result<'T, 'E>
+    type Extractor<'T, 'E> = HttpContext -> Task<Result<'T, 'E>>
+
+    /// <summary>Synchronous extractor — convenience alias for extractors that don't need async.
+    /// Wrap with <c>Task.FromResult</c> or use <c>Extractor.preconditionSync</c> to convert.</summary>
+    /// <typeparam name="T">The type to extract.</typeparam>
+    /// <typeparam name="E">The error type on failure.</typeparam>
+    type SyncExtractor<'T, 'E> = HttpContext -> Result<'T, 'E>
 
     // =========================================================================
     // Extractor Configuration Types
@@ -187,14 +262,19 @@ module Extraction =
 
     /// <summary>Registers a parser for a custom type in route/query parameters.</summary>
     /// <remarks>
-    /// <para>Create with <c>Extractor.parser</c>. Only needed for custom types -
-    /// built-in types (Guid, string, int, int64, bool) and single-case DU wrappers
-    /// are handled automatically.</para>
+    /// <para>Create with <c>Extractor.parser</c>, <c>Extractor.constrainedParser</c>, or
+    /// <c>Extractor.typedParser</c>. Only needed for custom types — built-in types
+    /// (Guid, string, int, int64, bool) and single-case DU wrappers are handled automatically.</para>
+    /// <para><c>InputType</c> determines how values are fed to the parser: <c>typeof&lt;string&gt;</c>
+    /// for string parsers, or a typed input (e.g., <c>typeof&lt;bool&gt;</c>) for typed parsers.
+    /// <c>ExplicitConstraints</c> adds ASP.NET Core route constraints at endpoint registration.</para>
     /// </remarks>
     /// <example>
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
-    ///     Parsers = [ Extractor.parser (fun s -> Ok (Slug s)) ]
+    ///     Parsers = [
+    ///         Extractor.constrainedParser&lt;Slug&gt; [| RouteConstraint.Alpha |] (fun s -> Ok (Slug s))
+    ///     ]
     ///     // ... other config
     /// }
     /// </code>
@@ -238,7 +318,7 @@ module Extraction =
             /// The marker type this extracts (e.g., typeof<PreCondition<UserId>>)
             ForType: Type
             /// Extract the value from HTTP context
-            Extract: HttpContext -> Result<obj, 'E>
+            Extract: HttpContext -> Task<Result<obj, 'E>>
         }
 
     /// <summary>Configuration for Route.endpoints - bundles all extraction settings.</summary>
@@ -300,7 +380,11 @@ module Extraction =
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
     ///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; requireAuth ]
-    ///     Parsers = [ Extractor.parser&lt;Slug&gt; (fun s -> Ok (Slug s)) ]
+    ///     Parsers = [
+    ///         Extractor.parser&lt;Slug&gt; (fun s -> Ok (Slug s))                                     // no constraint
+    ///         Extractor.constrainedParser&lt;Slug&gt; [| RouteConstraint.Alpha |] (fun s -> Ok (Slug s))  // adds :alpha
+    ///         Extractor.typedParser&lt;bool, Toggle&gt; (fun b -> Ok (if b then On else Off))          // adds :bool
+    ///     ]
     ///     MakeError = fun msg -> BadRequest msg
     ///     CombineErrors = fun errors -> errors |> List.head
     ///     ToErrorResponse = fun e -> Response.ofPlainText (string e)
@@ -309,19 +393,33 @@ module Extraction =
     /// </example>
     [<RequireQualifiedAccess>]
     module Extractor =
-        /// <summary>Registers an extractor for <c>PreCondition&lt;'T&gt;</c> fields.</summary>
+        /// <summary>Registers an async extractor for <c>PreCondition&lt;'T&gt;</c> fields.</summary>
         /// <typeparam name="T">The inner type (e.g., UserId in PreCondition&lt;UserId&gt;).</typeparam>
         /// <typeparam name="E">The error type.</typeparam>
-        /// <param name="extractor">Function that extracts the value from HTTP context.</param>
+        /// <param name="extractor">Async function that extracts the value from HTTP context.</param>
         /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
         let precondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> =
             { ForType = typeof<PreCondition<'T>>
-              Extract = fun ctx -> extractor ctx |> Result.map (fun v -> box (PreCondition v)) }
+              Extract =
+                fun ctx ->
+                    task {
+                        let! result = extractor ctx
+                        return result |> Result.map (fun v -> box (PreCondition v))
+                    } }
 
-        /// <summary>Registers an extractor for <c>OverridablePreCondition&lt;'T&gt;</c> fields.</summary>
+        /// <summary>Registers a sync extractor for <c>PreCondition&lt;'T&gt;</c> fields.
+        /// Convenience wrapper that wraps a synchronous extractor in <c>Task.FromResult</c>.</summary>
+        /// <typeparam name="T">The inner type (e.g., UserId in PreCondition&lt;UserId&gt;).</typeparam>
+        /// <typeparam name="E">The error type.</typeparam>
+        /// <param name="extractor">Synchronous function that extracts the value from HTTP context.</param>
+        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
+        let preconditionSync<'T, 'E> (extractor: SyncExtractor<'T, 'E>) : PreconditionExtractor<'E> =
+            precondition (fun ctx -> Task.FromResult(extractor ctx))
+
+        /// <summary>Registers an async extractor for <c>OverridablePreCondition&lt;'T&gt;</c> fields.</summary>
         /// <typeparam name="T">The inner type (e.g., AdminId in OverridablePreCondition&lt;AdminId&gt;).</typeparam>
         /// <typeparam name="E">The error type.</typeparam>
-        /// <param name="extractor">Function that extracts the value from HTTP context.</param>
+        /// <param name="extractor">Async function that extracts the value from HTTP context.</param>
         /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
         /// <remarks>
         /// <para>Use this when child routes may skip the precondition with
@@ -329,7 +427,21 @@ module Extraction =
         /// </remarks>
         let overridablePrecondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> =
             { ForType = typeof<OverridablePreCondition<'T>>
-              Extract = fun ctx -> extractor ctx |> Result.map (fun v -> box (OverridablePreCondition v)) }
+              Extract =
+                fun ctx ->
+                    task {
+                        let! result = extractor ctx
+                        return result |> Result.map (fun v -> box (OverridablePreCondition v))
+                    } }
+
+        /// <summary>Registers a sync extractor for <c>OverridablePreCondition&lt;'T&gt;</c> fields.
+        /// Convenience wrapper that wraps a synchronous extractor in <c>Task.FromResult</c>.</summary>
+        /// <typeparam name="T">The inner type (e.g., AdminId in OverridablePreCondition&lt;AdminId&gt;).</typeparam>
+        /// <typeparam name="E">The error type.</typeparam>
+        /// <param name="extractor">Synchronous function that extracts the value from HTTP context.</param>
+        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
+        let overridablePreconditionSync<'T, 'E> (extractor: SyncExtractor<'T, 'E>) : PreconditionExtractor<'E> =
+            overridablePrecondition (fun ctx -> Task.FromResult(extractor ctx))
 
         /// <summary>Registers a parser for a custom type used in route or query parameters.</summary>
         /// <typeparam name="T">The type to parse (e.g., Slug, CustomId).</typeparam>
@@ -338,6 +450,9 @@ module Extraction =
         /// <remarks>
         /// <para>Only needed for custom types. Built-in types and single-case DU wrappers
         /// around built-in types are handled automatically.</para>
+        /// <para>This parser adds no route constraints. Use <see cref="M:Falco.UnionRoutes.Extraction.Extractor.constrainedParser``1"/>
+        /// to add constraints (e.g., <c>:alpha</c>), or <see cref="M:Falco.UnionRoutes.Extraction.Extractor.typedParser``2"/>
+        /// for typed input with implicit constraints.</para>
         /// </remarks>
         let parser<'T> (parser: Parser<'T>) : FieldParser =
             { ForType = typeof<'T>
@@ -389,7 +504,9 @@ module Extraction =
         : HttpHandler =
         fun (ctx: HttpContext) ->
             task {
-                match extractor ctx with
+                let! result = extractor ctx
+
+                match result with
                 | Error e -> return! toResponse e ctx
                 | Ok a -> return! handler a ctx
             }
