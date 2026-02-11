@@ -98,7 +98,7 @@ let ``PostRoute.Detail includes parameter placeholder`` () =
     let id = Guid.NewGuid()
     let info = Route.info (PostRoute.Detail id)
     test <@ info.Method = HttpMethod.Get @>
-    test <@ info.Path = "/posts/{id}" @>
+    test <@ info.Path = "/posts/{id:guid}" @>
 
 [<Fact>]
 let ``PostRoute.Create uses POST method`` () =
@@ -132,7 +132,7 @@ let ``Deeply nested route with param`` () =
     let info = Route.info (TestRoute.Api(ApiRoute.Posts(PostRoute.Detail id)))
 
     test <@ info.Method = HttpMethod.Get @>
-    test <@ info.Path = "/posts/{id}" @>
+    test <@ info.Path = "/posts/{id:guid}" @>
 
 [<Fact>]
 let ``Nested route inherits method from leaf`` () =
@@ -247,13 +247,13 @@ let ``Create convention returns empty path with POST`` () =
 let ``Delete convention returns DELETE method`` () =
     let info = Route.info (ConventionRoute.Delete(Guid.Empty))
     test <@ info.Method = HttpMethod.Delete @>
-    test <@ info.Path = "/{id}" @>
+    test <@ info.Path = "/{id:guid}" @>
 
 [<Fact>]
 let ``Patch convention returns PATCH method`` () =
     let info = Route.info (ConventionRoute.Patch(Guid.Empty))
     test <@ info.Method = HttpMethod.Patch @>
-    test <@ info.Path = "/{id}" @>
+    test <@ info.Path = "/{id:guid}" @>
 
 [<Fact>]
 let ``Regular case name converts to kebab-case path`` () =
@@ -337,7 +337,7 @@ type MultiParamRoute = | [<Route(RouteMethod.Get, Path = "{a}/{b}")>] TwoParams 
 let ``Route with multiple parameters includes all in path`` () =
     let info = Route.info (MultiParamRoute.TwoParams(Guid.Empty, Guid.Empty))
 
-    test <@ info.Path = "/{a}/{b}" @>
+    test <@ info.Path = "/{a:guid}/{b:guid}" @>
 
 [<Fact>]
 let ``link substitutes multiple parameters`` () =
@@ -400,8 +400,8 @@ let ``Issue #1 - Single-case wrapper with PreCondition should not append {Item} 
         Issue1Route.Detail(PreCondition(WrappedUserId(Guid.NewGuid())), WrappedPostId(Guid.NewGuid()))
 
     let info = Route.info route
-    // Should be /posts/{id}, not /posts/{id}/{Item}
-    test <@ info.Path = "/posts/{id}" @>
+    // Should be /posts/{id:guid}, not /posts/{id}/{Item}
+    test <@ info.Path = "/posts/{id:guid}" @>
 
 [<Fact>]
 let ``Issue #1 - link with single-case wrapper should not include Item`` () =
@@ -442,8 +442,8 @@ let ``Nested route with params includes case name in path`` () =
         NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items UserItemRoute.List)
 
     let info = Route.info route
-    // Should be /users/{userId}/items, not just /{userId}/items
-    test <@ info.Path = "/users/{userId}/items" @>
+    // Should be /users/{userId:guid}/items, not just /{userId:guid}/items
+    test <@ info.Path = "/users/{userId:guid}/items" @>
 
 [<Fact>]
 let ``Nested route with params and child show includes all segments`` () =
@@ -451,7 +451,7 @@ let ``Nested route with params and child show includes all segments`` () =
         NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items(UserItemRoute.Show(NestedItemId Guid.Empty)))
 
     let info = Route.info route
-    test <@ info.Path = "/users/{userId}/items/{itemId}" @>
+    test <@ info.Path = "/users/{userId:guid}/items/{itemId:guid}" @>
 
 [<Fact>]
 let ``Nested route with params link substitutes values`` () =
@@ -651,28 +651,28 @@ let ``RESTful nested routes - create user`` () =
 let ``RESTful nested routes - show user`` () =
     let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Show)
     let info = Route.info route
-    test <@ info.Path = "/{userId}" @>
+    test <@ info.Path = "/{userId:guid}" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
 let ``RESTful nested routes - edit user`` () =
     let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Edit)
     let info = Route.info route
-    test <@ info.Path = "/{userId}/edit" @>
+    test <@ info.Path = "/{userId:guid}/edit" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
 let ``RESTful nested routes - delete user`` () =
     let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Delete)
     let info = Route.info route
-    test <@ info.Path = "/{userId}" @>
+    test <@ info.Path = "/{userId:guid}" @>
     test <@ info.Method = HttpMethod.Delete @>
 
 [<Fact>]
 let ``RESTful nested routes - patch user`` () =
     let route = RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Patch)
     let info = Route.info route
-    test <@ info.Path = "/{userId}" @>
+    test <@ info.Path = "/{userId:guid}" @>
     test <@ info.Method = HttpMethod.Patch @>
 
 [<Fact>]
@@ -681,7 +681,7 @@ let ``RESTful nested routes - list posts`` () =
         RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Posts RestfulPostRoute.List)
 
     let info = Route.info route
-    test <@ info.Path = "/{userId}/posts" @>
+    test <@ info.Path = "/{userId:guid}/posts" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
@@ -690,7 +690,7 @@ let ``RESTful nested routes - create post`` () =
         RestfulUserRoute.Member(Guid.Empty, RestfulUserDetailRoute.Posts RestfulPostRoute.Create)
 
     let info = Route.info route
-    test <@ info.Path = "/{userId}/posts" @>
+    test <@ info.Path = "/{userId:guid}/posts" @>
     test <@ info.Method = HttpMethod.Post @>
 
 [<Fact>]
@@ -702,7 +702,7 @@ let ``RESTful nested routes - show post`` () =
         )
 
     let info = Route.info route
-    test <@ info.Path = "/{userId}/posts/{postId}" @>
+    test <@ info.Path = "/{userId:guid}/posts/{postId:guid}" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
@@ -714,7 +714,7 @@ let ``RESTful nested routes - edit post`` () =
         )
 
     let info = Route.info route
-    test <@ info.Path = "/{userId}/posts/{postId}/edit" @>
+    test <@ info.Path = "/{userId:guid}/posts/{postId:guid}/edit" @>
     test <@ info.Method = HttpMethod.Get @>
 
 [<Fact>]
@@ -726,7 +726,7 @@ let ``RESTful nested routes - delete post`` () =
         )
 
     let info = Route.info route
-    test <@ info.Path = "/{userId}/posts/{postId}" @>
+    test <@ info.Path = "/{userId:guid}/posts/{postId:guid}" @>
     test <@ info.Method = HttpMethod.Delete @>
 
 [<Fact>]
@@ -913,4 +913,134 @@ let ``endpoints sorts more specific routes before less specific`` () =
             |> Array.toList)
 
     test <@ infos.[0].Path = "/posts/new" @>
-    test <@ infos.[1].Path = "/posts/{id}" @>
+    test <@ infos.[1].Path = "/posts/{id:guid}" @>
+
+// =============================================================================
+// Implicit type constraint tests
+// =============================================================================
+
+type IntParamRoute = ByCount of count: int
+
+type Int64ParamRoute = ByBigId of id: int64
+
+type BoolParamRoute = ByEnabled of enabled: bool
+
+type StringParamRoute = ByName of name: string
+
+type GuidParamRoute = ById of id: Guid
+
+type PostIdWrapper = PostIdWrapper of Guid
+
+type WrapperConstraintRoute = ByPostId of id: PostIdWrapper
+
+[<Fact>]
+let ``implicit constraint - Guid gets :guid`` () =
+    let info = Route.info (GuidParamRoute.ById Guid.Empty)
+    test <@ info.Path = "/by-id/{id:guid}" @>
+
+[<Fact>]
+let ``implicit constraint - int gets :int`` () =
+    let info = Route.info (IntParamRoute.ByCount 0)
+    test <@ info.Path = "/by-count/{count:int}" @>
+
+[<Fact>]
+let ``implicit constraint - int64 gets :long`` () =
+    let info = Route.info (Int64ParamRoute.ByBigId 0L)
+    test <@ info.Path = "/by-big-id/{id:long}" @>
+
+[<Fact>]
+let ``implicit constraint - bool gets :bool`` () =
+    let info = Route.info (BoolParamRoute.ByEnabled false)
+    test <@ info.Path = "/by-enabled/{enabled:bool}" @>
+
+[<Fact>]
+let ``implicit constraint - string gets no constraint`` () =
+    let info = Route.info (StringParamRoute.ByName "")
+    test <@ info.Path = "/by-name/{name}" @>
+
+[<Fact>]
+let ``implicit constraint - single-case wrapper DU gets inner type constraint`` () =
+    let info = Route.info (WrapperConstraintRoute.ByPostId(PostIdWrapper Guid.Empty))
+    test <@ info.Path = "/by-post-id/{id:guid}" @>
+
+[<Fact>]
+let ``implicit constraint - link generation works with constrained paths`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+    let url = Route.link (GuidParamRoute.ById id)
+    test <@ url = "/by-id/12345678-1234-1234-1234-123456789abc" @>
+
+[<Fact>]
+let ``implicit constraint - wrapper link generation works`` () =
+    let id = Guid.Parse("12345678-1234-1234-1234-123456789abc")
+    let url = Route.link (WrapperConstraintRoute.ByPostId(PostIdWrapper id))
+    test <@ url = "/by-post-id/12345678-1234-1234-1234-123456789abc" @>
+
+// =============================================================================
+// Explicit Route attribute constraint tests
+// =============================================================================
+
+type AlphaConstraintRoute = | [<Route(Constraints = [| RouteConstraint.Alpha |])>] ByTag of name: string
+
+type MinMaxLengthRoute =
+    | [<Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)>] ByTag of name: string
+
+type MinMaxValueRoute = | [<Route(MinValue = 1, MaxValue = 100)>] ByPage of page: int
+
+type RegexConstraintRoute = | [<Route(Pattern = "^[a-z]+$")>] BySlug of slug: string
+
+[<Fact>]
+let ``explicit constraint - Alpha on string field`` () =
+    let info = Route.info (AlphaConstraintRoute.ByTag "")
+    test <@ info.Path = "/by-tag/{name:alpha}" @>
+
+[<Fact>]
+let ``explicit constraint - Alpha + MinLength + MaxLength`` () =
+    let info = Route.info (MinMaxLengthRoute.ByTag "")
+    test <@ info.Path = "/by-tag/{name:alpha:minlength(3):maxlength(50)}" @>
+
+[<Fact>]
+let ``explicit constraint - MinValue + MaxValue on int field`` () =
+    let info = Route.info (MinMaxValueRoute.ByPage 0)
+    test <@ info.Path = "/by-page/{page:int:min(1):max(100)}" @>
+
+[<Fact>]
+let ``explicit constraint - Regex pattern`` () =
+    let info = Route.info (RegexConstraintRoute.BySlug "")
+    test <@ info.Path = "/by-slug/{slug:regex(^[a-z]+$)}" @>
+
+[<Fact>]
+let ``explicit constraint - link generation strips constraints`` () =
+    let url = Route.link (MinMaxLengthRoute.ByTag "hello")
+    test <@ url = "/by-tag/hello" @>
+
+// =============================================================================
+// Explicit path with constraint application tests
+// =============================================================================
+
+type ExplicitPathGuidRoute = | [<Route(Path = "posts/{id}")>] Detail of id: Guid
+
+type ExplicitPathWithExistingConstraint = | [<Route(Path = "posts/{id:guid}")>] Detail of id: Guid
+
+[<Fact>]
+let ``explicit path - bare params get implicit constraints`` () =
+    let info = Route.info (ExplicitPathGuidRoute.Detail Guid.Empty)
+    test <@ info.Path = "/posts/{id:guid}" @>
+
+[<Fact>]
+let ``explicit path - existing constraints are preserved`` () =
+    let info = Route.info (ExplicitPathWithExistingConstraint.Detail Guid.Empty)
+    test <@ info.Path = "/posts/{id:guid}" @>
+
+// =============================================================================
+// Validation with constrained paths tests
+// =============================================================================
+
+[<Fact>]
+let ``validateStructure passes for constrained routes`` () =
+    let result = Route.validateStructure<MinMaxLengthRoute> ()
+    test <@ result = Ok() @>
+
+[<Fact>]
+let ``validateStructure passes for implicit constraint routes`` () =
+    let result = Route.validateStructure<GuidParamRoute> ()
+    test <@ result = Ok() @>

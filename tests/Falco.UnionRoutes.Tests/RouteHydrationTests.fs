@@ -1001,3 +1001,69 @@ let ``validate catches missing preconditions`` () =
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
     | Ok() -> failwith "Expected validation error"
+
+// =============================================================================
+// Typed parser tests
+// =============================================================================
+
+type ToggleState =
+    | On
+    | Off
+
+type ToggleRoute = | [<Route(Path = "toggle/{state}")>] Toggle of state: ToggleState
+
+let toggleParser =
+    Extractor.typedParser<bool, ToggleState> (fun b -> Ok(if b then On else Off))
+
+let hydrateToggle () =
+    Route.extractor<ToggleRoute, TestError> [] [ toggleParser ] makeError combineErrors
+
+[<Fact>]
+let ``typed parser receives pre-parsed bool value - true`` () =
+    let ctx = createMockContextWithRoute [ ("state", "true") ]
+    let pipeline = hydrateToggle () (ToggleRoute.Toggle Off)
+    test <@ pipeline ctx = Ok(ToggleRoute.Toggle On) @>
+
+[<Fact>]
+let ``typed parser receives pre-parsed bool value - false`` () =
+    let ctx = createMockContextWithRoute [ ("state", "false") ]
+    let pipeline = hydrateToggle () (ToggleRoute.Toggle On)
+    test <@ pipeline ctx = Ok(ToggleRoute.Toggle Off) @>
+
+[<Fact>]
+let ``typed parser returns error for invalid input`` () =
+    let ctx = createMockContextWithRoute [ ("state", "maybe") ]
+    let pipeline = hydrateToggle () (ToggleRoute.Toggle Off)
+    test <@ Result.isError (pipeline ctx) @>
+
+[<Fact>]
+let ``typed parser returns error for missing param`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrateToggle () (ToggleRoute.Toggle Off)
+    test <@ Result.isError (pipeline ctx) @>
+
+// =============================================================================
+// Constrained parser tests
+// =============================================================================
+
+type AlphaSlug = AlphaSlug of string
+
+type AlphaSlugRoute = BySlug of slug: AlphaSlug
+
+let alphaSlugParser =
+    Extractor.constrainedParser<AlphaSlug> [| RouteConstraint.Alpha |] (fun s -> Ok(AlphaSlug s))
+
+let hydrateAlphaSlug () =
+    Route.extractor<AlphaSlugRoute, TestError> [] [ alphaSlugParser ] makeError combineErrors
+
+[<Fact>]
+let ``constrained parser hydrates string value`` () =
+    let ctx = createMockContextWithRoute [ ("slug", "helloworld") ]
+    let pipeline = hydrateAlphaSlug () (AlphaSlugRoute.BySlug(AlphaSlug ""))
+    test <@ pipeline ctx = Ok(AlphaSlugRoute.BySlug(AlphaSlug "helloworld")) @>
+
+[<Fact>]
+let ``constrained parser returns error for missing value`` () =
+    let ctx = createMockContextWithRoute []
+    let pipeline = hydrateAlphaSlug () (AlphaSlugRoute.BySlug(AlphaSlug ""))
+    test <@ Result.isError (pipeline ctx) @>
