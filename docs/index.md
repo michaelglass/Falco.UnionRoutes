@@ -17,7 +17,7 @@ let handlePost route : HttpHandler =
 ```
 
 **What you get:**
-- Compiler enforces you handle every route
+- automatic extraction, parsing of query params. Handlers don't need to parse query params or check if user is logged in, etc.
 - `Route.link (Detail postId)` -> `"/posts/abc-123"` (type-checked)
 - Route/query params and auth automatically extracted based on field types
 <!-- sync:intro:end -->
