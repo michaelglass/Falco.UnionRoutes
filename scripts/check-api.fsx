@@ -11,6 +11,7 @@
 open System
 open System.Diagnostics
 open System.IO
+open System.Text.RegularExpressions
 
 // ============================================================================
 // Configuration
@@ -110,10 +111,15 @@ let compareApi (oldApi: string list) (newApi: string list) : ApiChange =
     | [], _ :: _ -> NonBreaking added
     | [], [] -> NoChange
 
-let getVersionBump =
+let getMajorVersion () =
+    let content = File.ReadAllText(fsproj)
+    let m = Regex.Match(content, @"<Version>(\d+)\.")
+    if m.Success then int m.Groups.[1].Value else 0
+
+let getVersionBump (majorVersion: int) =
     function
-    | Breaking _ -> Major
-    | NonBreaking _ -> Minor
+    | Breaking _ -> if majorVersion >= 1 then Major else Minor
+    | NonBreaking _ -> if majorVersion >= 1 then Minor else Patch
     | NoChange -> Patch
 
 // ============================================================================
@@ -139,14 +145,18 @@ let printChange (change: ApiChange) =
         added |> List.iter (printfn "  + %s")
     | NoChange -> printfn "\nNo public API changes."
 
-let printSummary (change: ApiChange) =
-    let bump = getVersionBump change
+let printSummary (majorVersion: int) (change: ApiChange) =
+    let bump = getVersionBump majorVersion change
 
     printfn "\n----------------------------------------"
 
     match bump with
     | Major -> printfn "MAJOR version bump required (breaking changes)"
-    | Minor -> printfn "MINOR version bump required (new features)"
+    | Minor ->
+        if majorVersion < 1 then
+            printfn "MINOR version bump required (breaking changes, pre-1.0)"
+        else
+            printfn "MINOR version bump required (new features)"
     | Patch -> printfn "PATCH version bump (no API changes)"
 
 // ============================================================================
@@ -194,11 +204,12 @@ let main (argv: string array) =
         printfn "\nOld API: %d signatures" oldApi.Length
         printfn "New API: %d signatures" newApi.Length
 
+        let majorVersion = getMajorVersion ()
         let change = compareApi oldApi newApi
         printChange change
-        printSummary change
+        printSummary majorVersion change
 
-        match getVersionBump change with
+        match getVersionBump majorVersion change with
         | Major -> 2 // Exit code 2 for breaking
         | Minor -> 1 // Exit code 1 for additions
         | Patch -> 0 // Exit code 0 for no changes

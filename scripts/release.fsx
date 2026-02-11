@@ -271,7 +271,7 @@ module Bump =
                 | Alpha _ -> "alpha"
                 | Beta _ -> "beta"
                 | RC _ -> "rc" }
-        | Stable ->
+        | Stable when current.Major >= 1 ->
             match change with
             | Breaking _ ->
                 { NewVersion = Version.bumpMajor current
@@ -279,6 +279,17 @@ module Bump =
             | Addition _ ->
                 { NewVersion = Version.bumpMinor current
                   Reason = "MINOR (new API)" }
+            | NoChange ->
+                { NewVersion = Version.bumpPatch current
+                  Reason = "PATCH (no API changes)" }
+        | Stable ->
+            match change with
+            | Breaking _ ->
+                { NewVersion = Version.bumpMinor current
+                  Reason = "MINOR (breaking change, pre-1.0)" }
+            | Addition _ ->
+                { NewVersion = Version.bumpPatch current
+                  Reason = "PATCH (new API, pre-1.0)" }
             | NoChange ->
                 { NewVersion = Version.bumpPatch current
                   Reason = "PATCH (no API changes)" }
