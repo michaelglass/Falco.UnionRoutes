@@ -109,6 +109,22 @@ let createResolver (dllPath: string) =
             |> Option.map context.LoadFromAssemblyPath
             |> Option.defaultValue null }
 
+/// Formats a type name including generic type arguments, e.g. "FSharpFunc<String, FSharpResult<Object, String>>"
+let rec formatTypeName (t: Type) =
+    if t.IsGenericType then
+        let baseName = t.Name.Substring(0, t.Name.IndexOf('`'))
+
+        let args =
+            t.GetGenericArguments()
+            |> Array.map formatTypeName
+            |> String.concat ", "
+
+        sprintf "%s<%s>" baseName args
+    elif t.IsArray then
+        sprintf "%s[]" (formatTypeName (t.GetElementType()))
+    else
+        t.Name
+
 let extractFromAssembly (dllPath: string) : string list =
     use context = new MetadataLoadContext(createResolver dllPath)
     let assembly = context.LoadFromAssemblyPath(dllPath)
@@ -134,18 +150,18 @@ let extractFromAssembly (dllPath: string) : string list =
                     else
                         let params' =
                             mi.GetParameters()
-                            |> Array.map (fun p -> p.ParameterType.Name)
+                            |> Array.map (fun p -> formatTypeName p.ParameterType)
                             |> String.concat ", "
 
-                        Some(sprintf "  %s(%s): %s" mi.Name params' mi.ReturnType.Name)
+                        Some(sprintf "  %s::%s(%s): %s" t.FullName mi.Name params' (formatTypeName mi.ReturnType))
                 | MemberTypes.Property ->
                     let pi = m :?> PropertyInfo
-                    Some(sprintf "  %s: %s" pi.Name pi.PropertyType.Name)
+                    Some(sprintf "  %s::%s: %s" t.FullName pi.Name (formatTypeName pi.PropertyType))
                 | MemberTypes.Field ->
                     let fi = m :?> FieldInfo
 
                     if fi.IsPublic then
-                        Some(sprintf "  %s: %s" fi.Name fi.FieldType.Name)
+                        Some(sprintf "  %s::%s: %s" t.FullName fi.Name (formatTypeName fi.FieldType))
                     else
                         None
                 | MemberTypes.Constructor ->
@@ -153,10 +169,10 @@ let extractFromAssembly (dllPath: string) : string list =
 
                     let params' =
                         ci.GetParameters()
-                        |> Array.map (fun p -> p.ParameterType.Name)
+                        |> Array.map (fun p -> formatTypeName p.ParameterType)
                         |> String.concat ", "
 
-                    Some(sprintf "  .ctor(%s)" params')
+                    Some(sprintf "  %s::.ctor(%s)" t.FullName params')
                 | _ -> None)
 
         Array.append [| typeSig |] memberSigs)
