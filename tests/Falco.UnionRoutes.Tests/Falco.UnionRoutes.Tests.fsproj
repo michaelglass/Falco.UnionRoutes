@@ -12,6 +12,7 @@
     <Compile Include="RouteTests.fs" />
     <Compile Include="ExtractionTests.fs" />
     <Compile Include="RouteHydrationTests.fs" />
+    <Compile Include="SpecTests.fs" />
   </ItemGroup>
 
   <ItemGroup>
