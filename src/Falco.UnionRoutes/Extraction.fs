@@ -211,7 +211,7 @@ type RouteConstraint =
 ///   <item><description><c>Parser&lt;'T&gt;</c> - converts strings to typed values (for route/query params)</description></item>
 ///   <item><description><c>Extractor&lt;'T,'E&gt;</c> - extracts values from HTTP context (for auth, headers, etc.)</description></item>
 ///   <item><description><c>Extractor.parser</c> - registers a parser for custom types</description></item>
-///   <item><description><c>Extractor.precondition</c> - registers an extractor for precondition fields</description></item>
+///   <item><description><c>Extractor.precondition</c> - registers extractors for both PreCondition and OverridablePreCondition fields</description></item>
 /// </list>
 /// </remarks>
 [<AutoOpen>]
@@ -295,15 +295,16 @@ module Extraction =
     /// <summary>Registers an extractor for PreCondition or OverridablePreCondition fields.</summary>
     /// <typeparam name="E">The error type returned when extraction fails.</typeparam>
     /// <remarks>
-    /// <para>Create with <c>Extractor.precondition</c> or <c>Extractor.overridablePrecondition</c>.</para>
-    /// <para>Each PreCondition&lt;T&gt; or OverridablePreCondition&lt;T&gt; type used in routes
-    /// must have a corresponding extractor registered in EndpointConfig.</para>
+    /// <para>Create with <c>Extractor.precondition</c>. Each call registers extractors for both
+    /// <c>PreCondition&lt;T&gt;</c> and <c>OverridablePreCondition&lt;T&gt;</c>.</para>
+    /// <para>Each precondition type used in routes must have a corresponding extractor
+    /// registered in EndpointConfig.</para>
     /// </remarks>
     /// <example>
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
     ///     Preconditions = [
-    ///         Extractor.precondition&lt;UserId, _&gt; (fun ctx ->
+    ///         yield! Extractor.precondition&lt;UserId, _&gt; (fun ctx ->
     ///             match getAuthCookie ctx with
     ///             | Some id -> Ok id
     ///             | None -> Error NotAuthenticated)
@@ -334,7 +335,7 @@ module Extraction =
     /// <example>
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
-    ///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; requireAuth ]
+    ///     Preconditions = [ yield! Extractor.precondition&lt;UserId, _&gt; requireAuth ]
     ///     Parsers = [ Extractor.parser&lt;Slug&gt; slugParser ]
     ///     MakeError = fun msg -> BadRequest msg
     ///     CombineErrors = fun errors -> errors |> List.head
@@ -348,7 +349,7 @@ module Extraction =
     type EndpointConfig<'E> =
         {
             /// Extractors for PreCondition<'T> and OverridablePreCondition<'T> fields.
-            /// Create with Extractor.precondition or Extractor.overridablePrecondition.
+            /// Create with Extractor.precondition (covers both types).
             Preconditions: PreconditionExtractor<'E> list
             /// Parsers for custom types in route/query parameters.
             /// Create with Extractor.parser. Built-in types are handled automatically.
@@ -372,14 +373,13 @@ module Extraction =
     ///   <item><description>Built-in types (Guid, string, int, bool) - automatic</description></item>
     ///   <item><description>Single-case DU wrappers (e.g., PostId of Guid) - automatic</description></item>
     ///   <item><description>Custom types - use <c>Extractor.parser</c></description></item>
-    ///   <item><description>PreCondition fields - use <c>Extractor.precondition</c></description></item>
-    ///   <item><description>OverridablePreCondition fields - use <c>Extractor.overridablePrecondition</c></description></item>
+    ///   <item><description>PreCondition/OverridablePreCondition fields - use <c>Extractor.precondition</c> (covers both)</description></item>
     /// </list>
     /// </remarks>
     /// <example>
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
-    ///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; requireAuth ]
+    ///     Preconditions = [ yield! Extractor.precondition&lt;UserId, _&gt; requireAuth ]
     ///     Parsers = [
     ///         Extractor.parser&lt;Slug&gt; (fun s -> Ok (Slug s))                                     // no constraint
     ///         Extractor.constrainedParser&lt;Slug&gt; [| RouteConstraint.Alpha |] (fun s -> Ok (Slug s))  // adds :alpha
@@ -393,55 +393,37 @@ module Extraction =
     /// </example>
     [<RequireQualifiedAccess>]
     module Extractor =
-        /// <summary>Registers an async extractor for <c>PreCondition&lt;'T&gt;</c> fields.</summary>
+        /// <summary>Registers an async extractor for both <c>PreCondition&lt;'T&gt;</c> and
+        /// <c>OverridablePreCondition&lt;'T&gt;</c> fields.</summary>
         /// <typeparam name="T">The inner type (e.g., UserId in PreCondition&lt;UserId&gt;).</typeparam>
         /// <typeparam name="E">The error type.</typeparam>
         /// <param name="extractor">Async function that extracts the value from HTTP context.</param>
-        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
-        let precondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> =
-            { ForType = typeof<PreCondition<'T>>
-              Extract =
-                fun ctx ->
-                    task {
-                        let! result = extractor ctx
-                        return result |> Result.map (fun v -> box (PreCondition v))
-                    } }
+        /// <returns>A list of PreconditionExtractors covering both PreCondition and OverridablePreCondition.</returns>
+        let precondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> list =
+            [ { ForType = typeof<PreCondition<'T>>
+                Extract =
+                  fun ctx ->
+                      task {
+                          let! result = extractor ctx
+                          return result |> Result.map (fun v -> box (PreCondition v))
+                      } }
+              { ForType = typeof<OverridablePreCondition<'T>>
+                Extract =
+                  fun ctx ->
+                      task {
+                          let! result = extractor ctx
+                          return result |> Result.map (fun v -> box (OverridablePreCondition v))
+                      } } ]
 
-        /// <summary>Registers a sync extractor for <c>PreCondition&lt;'T&gt;</c> fields.
+        /// <summary>Registers a sync extractor for both <c>PreCondition&lt;'T&gt;</c> and
+        /// <c>OverridablePreCondition&lt;'T&gt;</c> fields.
         /// Convenience wrapper that wraps a synchronous extractor in <c>Task.FromResult</c>.</summary>
         /// <typeparam name="T">The inner type (e.g., UserId in PreCondition&lt;UserId&gt;).</typeparam>
         /// <typeparam name="E">The error type.</typeparam>
         /// <param name="extractor">Synchronous function that extracts the value from HTTP context.</param>
-        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
-        let preconditionSync<'T, 'E> (extractor: SyncExtractor<'T, 'E>) : PreconditionExtractor<'E> =
+        /// <returns>A list of PreconditionExtractors covering both PreCondition and OverridablePreCondition.</returns>
+        let preconditionSync<'T, 'E> (extractor: SyncExtractor<'T, 'E>) : PreconditionExtractor<'E> list =
             precondition (fun ctx -> Task.FromResult(extractor ctx))
-
-        /// <summary>Registers an async extractor for <c>OverridablePreCondition&lt;'T&gt;</c> fields.</summary>
-        /// <typeparam name="T">The inner type (e.g., AdminId in OverridablePreCondition&lt;AdminId&gt;).</typeparam>
-        /// <typeparam name="E">The error type.</typeparam>
-        /// <param name="extractor">Async function that extracts the value from HTTP context.</param>
-        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
-        /// <remarks>
-        /// <para>Use this when child routes may skip the precondition with
-        /// <c>[&lt;SkipAllPreconditions&gt;]</c> or <c>[&lt;SkipPrecondition(typeof&lt;T&gt;)&gt;]</c>.</para>
-        /// </remarks>
-        let overridablePrecondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> =
-            { ForType = typeof<OverridablePreCondition<'T>>
-              Extract =
-                fun ctx ->
-                    task {
-                        let! result = extractor ctx
-                        return result |> Result.map (fun v -> box (OverridablePreCondition v))
-                    } }
-
-        /// <summary>Registers a sync extractor for <c>OverridablePreCondition&lt;'T&gt;</c> fields.
-        /// Convenience wrapper that wraps a synchronous extractor in <c>Task.FromResult</c>.</summary>
-        /// <typeparam name="T">The inner type (e.g., AdminId in OverridablePreCondition&lt;AdminId&gt;).</typeparam>
-        /// <typeparam name="E">The error type.</typeparam>
-        /// <param name="extractor">Synchronous function that extracts the value from HTTP context.</param>
-        /// <returns>A PreconditionExtractor for EndpointConfig.</returns>
-        let overridablePreconditionSync<'T, 'E> (extractor: SyncExtractor<'T, 'E>) : PreconditionExtractor<'E> =
-            overridablePrecondition (fun ctx -> Task.FromResult(extractor ctx))
 
         /// <summary>Registers a parser for a custom type used in route or query parameters.</summary>
         /// <typeparam name="T">The type to parse (e.g., Slug, CustomId).</typeparam>
