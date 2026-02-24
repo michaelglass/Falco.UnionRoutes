@@ -25,13 +25,18 @@ description = "Build the example app (for CI)"
 run = "dotnet build examples/ExampleApp --warnaserror"
 depends = ["build"]
 
+[tasks.generate-spec]
+description = "Generate OpenAPI spec from example app"
+run = "dotnet run --project tools/Falco.UnionRoutes.Cli -- examples/ExampleApp/ExampleApp.fsproj --title 'Example API' --version '1.0.0'"
+depends = ["build"]
+
 [tasks.format]
 description = "Format code with Fantomas"
-run = "dotnet fantomas src/ tests/ examples/"
+run = "dotnet fantomas src/ tests/ examples/ tools/"
 
 [tasks.format-check]
 description = "Check formatting without making changes"
-run = "dotnet fantomas src/ tests/ examples/ --check"
+run = "dotnet fantomas src/ tests/ examples/ tools/ --check"
 
 [tasks.lint]
 description = "Run FSharpLint"
