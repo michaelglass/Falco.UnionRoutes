@@ -316,6 +316,37 @@ Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pr
 ```
 <!-- sync:keyfunctions:end -->
 
+<!-- sync:openapi:start -->
+### OpenAPI Spec Generation
+
+Generate OpenAPI 3.0 JSON from your route types — useful for documentation, client generation, or API gateways.
+
+**Programmatic (library):**
+
+```fsharp
+let spec = Spec.generate<Route> { Title = "My API"; Version = "1.0.0"; Description = None }
+printfn "%s" spec
+```
+
+**CLI tool:**
+
+```bash
+# Install as a global tool
+dotnet tool install Falco.UnionRoutes.Cli
+
+# Generate to stdout (auto-detects route type)
+falco-routes MyApp/MyApp.fsproj --title "My API"
+
+# Specify route type and output file
+falco-routes MyApp/MyApp.fsproj MyApp.Route --output openapi.json
+
+# Skip build if already compiled
+falco-routes MyApp/MyApp.fsproj --no-build --title "My API" --version "2.0.0"
+```
+
+The CLI builds the project, loads the output assembly, and auto-detects the root route type. If multiple root route types exist, specify which one as the second argument.
+<!-- sync:openapi:end -->
+
 <!-- sync:license:start -->
 ## License
 
