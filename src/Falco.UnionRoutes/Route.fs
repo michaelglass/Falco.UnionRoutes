@@ -129,7 +129,7 @@ type RouteAttribute(method: RouteMethod) =
 ///     | Create of PreCondition&lt;UserId&gt;
 ///
 /// let config: EndpointConfig&lt;AppError&gt; = {
-///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; authExtractor ]
+///     Preconditions = [ yield! Extractor.precondition&lt;UserId, _&gt; authExtractor ]
 ///     Parsers = []
 ///     MakeError = fun msg -> BadRequest msg
 ///     CombineErrors = List.head
@@ -187,46 +187,46 @@ module Route =
         | path -> Some path
 
     /// Check if a type is PreCondition<'T> (precondition marker - should not be in route path)
-    let private isPreconditionType (t: Type) =
+    let internal isPreconditionType (t: Type) =
         t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<PreCondition<_>>
 
     /// Check if a type is OverridablePreCondition<'T> (skippable precondition marker - should not be in route path)
-    let private isOptionalPreconditionType (t: Type) =
+    let internal isOptionalPreconditionType (t: Type) =
         t.IsGenericType
         && t.GetGenericTypeDefinition() = typedefof<OverridablePreCondition<_>>
 
     /// Check if a type is QueryParam<'T> (query parameter - should not be in route path)
-    let private isQueryType (t: Type) =
+    let internal isQueryType (t: Type) =
         t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<QueryParam<_>>
 
     /// Check if a type is QueryParam<'T> option (optional query parameter - should not be in route path)
-    let private isOptionalQueryType (t: Type) =
+    let internal isOptionalQueryType (t: Type) =
         t.IsGenericType
         && t.GetGenericTypeDefinition() = typedefof<option<_>>
         && t.GetGenericArguments().[0].IsGenericType
         && t.GetGenericArguments().[0].GetGenericTypeDefinition() = typedefof<QueryParam<_>>
 
     /// Check if a type is Returns<'T> (response type marker - should not be in route path)
-    let private isReturnsType (t: Type) =
+    let internal isReturnsType (t: Type) =
         t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<Returns<_>>
 
     /// Check if a type is JsonBody<'T> (JSON body marker - should not be in route path)
-    let private isJsonBodyType (t: Type) =
+    let internal isJsonBodyType (t: Type) =
         t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<JsonBody<_>>
 
     /// Check if a type is FormBody<'T> (form body marker - should not be in route path)
-    let private isFormBodyType (t: Type) =
+    let internal isFormBodyType (t: Type) =
         t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<FormBody<_>>
 
     /// Check if a type is any body marker type
-    let private isBodyType (t: Type) = isJsonBodyType t || isFormBodyType t
+    let internal isBodyType (t: Type) = isJsonBodyType t || isFormBodyType t
 
     /// Supported primitive types for route/query extraction
     let private supportedPrimitives =
         [ typeof<Guid>; typeof<string>; typeof<int>; typeof<int64>; typeof<bool> ]
 
     /// Check if a type is a single-case DU wrapper for a primitive (e.g., PostId of Guid)
-    let private isSingleCaseWrapper (t: Type) =
+    let internal isSingleCaseWrapper (t: Type) =
         FSharpType.IsUnion(t)
         && let cases = FSharpType.GetUnionCases(t) in
 
@@ -235,7 +235,7 @@ module Route =
            && supportedPrimitives |> List.contains (cases.[0].GetFields().[0].PropertyType)
 
     /// Check if a type is a nested route union (for hierarchy traversal)
-    let private isNestedRouteUnion (t: Type) =
+    let internal isNestedRouteUnion (t: Type) =
         FSharpType.IsUnion(t)
         && t <> typeof<string>
         && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
@@ -248,7 +248,7 @@ module Route =
         && not (isSingleCaseWrapper t)
 
     /// Check if a field should be excluded from route path
-    let private isNonRouteField (f: Reflection.PropertyInfo) =
+    let internal isNonRouteField (f: Reflection.PropertyInfo) =
         isNestedRouteUnion f.PropertyType
         || isPreconditionType f.PropertyType
         || isOptionalPreconditionType f.PropertyType
@@ -1275,7 +1275,7 @@ module Route =
     /// <returns><c>Ok ()</c> if all types are covered, <c>Error</c> with list of missing types if invalid.</returns>
     /// <example>
     /// <code>
-    /// let preconditions = [ Extractor.precondition authExtractor; Extractor.overridablePrecondition adminExtractor ]
+    /// let preconditions = [ yield! Extractor.precondition authExtractor; yield! Extractor.precondition adminExtractor ]
     /// match Route.validatePreconditions&lt;Route, AppError&gt; preconditions with
     /// | Ok () -> ()
     /// | Error errors -> failwith (String.concat "\n" errors)
@@ -1305,7 +1305,7 @@ module Route =
     /// <code>
     /// [&lt;Fact&gt;]
     /// let ``all routes are valid`` () =
-    ///     let preconditions = [ Extractor.precondition authExtractor ]
+    ///     let preconditions = [ yield! Extractor.precondition authExtractor ]
     ///     let result = Route.validate&lt;Route, AppError&gt; preconditions
     ///     Assert.Equal(Ok (), result)
     /// </code>
@@ -1558,7 +1558,7 @@ module Route =
     /// <example>
     /// <code>
     /// let config: EndpointConfig&lt;AppError&gt; = {
-    ///     Preconditions = [ Extractor.precondition&lt;UserId, _&gt; requireAuth ]
+    ///     Preconditions = [ yield! Extractor.precondition&lt;UserId, _&gt; requireAuth ]
     ///     Parsers = []
     ///     MakeError = fun msg -> BadRequest msg
     ///     CombineErrors = fun errors -> errors |> List.head

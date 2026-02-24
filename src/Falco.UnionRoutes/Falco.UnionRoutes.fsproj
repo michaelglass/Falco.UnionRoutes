@@ -46,6 +46,7 @@
   <ItemGroup>
     <Compile Include="Extraction.fs" />
     <Compile Include="Route.fs" />
+    <Compile Include="Spec.fs" />
   </ItemGroup>
 
   <ItemGroup>
