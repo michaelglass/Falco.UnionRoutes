@@ -100,8 +100,8 @@ let requireAdmin : Extractor<AdminId, AppError> = fun ctx ->
 
 let config: EndpointConfig<AppError> = {
     Preconditions =
-        [ Extractor.precondition<UserId, AppError> requireAuth
-          Extractor.precondition<AdminId, AppError> requireAdmin ]
+        [ yield! Extractor.precondition<UserId, AppError> requireAuth
+          yield! Extractor.precondition<AdminId, AppError> requireAdmin ]
     Parsers = []
     MakeError = fun msg -> BadRequest msg
     CombineErrors = fun errors -> errors |> List.head
@@ -308,10 +308,8 @@ Route.validate<Route, Error> preconditions               // Full validation (for
 
 // Extractor module - create extractors for EndpointConfig
 // Extractors are async: Extractor<'T,'E> = HttpContext -> Task<Result<'T,'E>>
-Extractor.precondition<UserId, Error> extractFn              // For PreCondition<UserId> fields
+Extractor.precondition<UserId, Error> extractFn              // Both PreCondition + OverridablePreCondition
 Extractor.preconditionSync<UserId, Error> syncExtractFn      // Sync convenience wrapper
-Extractor.overridablePrecondition<AdminId, Error> extractFn  // For OverridablePreCondition<AdminId>
-Extractor.overridablePreconditionSync<AdminId, Error> syncFn // Sync convenience wrapper
 Extractor.parser<Slug> parseFn                               // For custom types (string input)
 Extractor.constrainedParser<Slug> [| Alpha |] parseFn        // String parser + route constraints
 Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pre-parsed input)

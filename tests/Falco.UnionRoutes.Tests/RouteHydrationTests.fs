@@ -133,14 +133,15 @@ let combineErrors (errors: TestError list) =
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
 // Precondition factories (create fresh each time to avoid module initialization issues)
-let userPrecondition () =
+// Each returns a list covering both PreCondition<'T> and OverridablePreCondition<'T>
+let userPreconditions () =
     Extractor.precondition<UserId, TestError> mockUserAuth
 
-let adminPrecondition () =
+let adminPreconditions () =
     Extractor.precondition<AdminId, TestError> mockAdminAuth
 
 let hydrate () =
-    Route.extractor<SimpleRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<SimpleRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 let hydrateString () =
     Route.extractor<StringRoute, TestError> [] [] makeError combineErrors
@@ -155,14 +156,14 @@ let hydrateBool () =
     Route.extractor<BoolRoute, TestError> [] [] makeError combineErrors
 
 let hydrateWrapper () =
-    Route.extractor<WrapperRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<WrapperRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 // Custom parser for Slug type
 let slugParser: Parser<Slug> = fun s -> Ok(Slug s)
 
 let hydrateCustom () =
     Route.extractor<CustomTypeRoute, TestError>
-        [ userPrecondition () ]
+        (userPreconditions ())
         [ Extractor.parser slugParser ]
         makeError
         combineErrors
@@ -180,7 +181,7 @@ let hydrateMultiField () =
     Route.extractor<MultiFieldRoute, TestError> [] [] makeError combineErrors
 
 let hydrateMultiPre () =
-    Route.extractor<MultiPreRoute, TestError> [ userPrecondition (); adminPrecondition () ] [] makeError combineErrors
+    Route.extractor<MultiPreRoute, TestError> (userPreconditions () @ adminPreconditions ()) [] makeError combineErrors
 
 // =============================================================================
 // Unit route tests (no fields)
@@ -867,29 +868,22 @@ type ParentWithOverridablePreCondition = Children of OverridablePreCondition<Use
 
 type ParentWithBothPreConditions = Children of PreCondition<AdminId> * OverridablePreCondition<UserId> * ChildRoute
 
-let overridablePreCondition () =
-    Extractor.overridablePrecondition<UserId, TestError> mockUserAuth
-
 let hydrateOverridablePreCondition () =
-    Route.extractor<OverridablePreConditionRoute, TestError> [ overridablePreCondition () ] [] makeError combineErrors
+    Route.extractor<OverridablePreConditionRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 let hydrateOverridablePreConditionWithAdmin () =
     Route.extractor<OverridablePreConditionRoute, TestError>
-        [ overridablePreCondition (); adminPrecondition () ]
+        (userPreconditions () @ adminPreconditions ())
         []
         makeError
         combineErrors
 
 let hydrateParentWithOverridablePreCondition () =
-    Route.extractor<ParentWithOverridablePreCondition, TestError>
-        [ overridablePreCondition () ]
-        []
-        makeError
-        combineErrors
+    Route.extractor<ParentWithOverridablePreCondition, TestError> (userPreconditions ()) [] makeError combineErrors
 
 let hydrateParentWithBothPreConditions () =
     Route.extractor<ParentWithBothPreConditions, TestError>
-        [ adminPrecondition (); overridablePreCondition () ]
+        (adminPreconditions () @ userPreconditions ())
         []
         makeError
         combineErrors
@@ -1074,7 +1068,7 @@ type RouteNeedingPrecondition =
 
 [<Fact>]
 let ``validatePreconditions returns Ok when all preconditions registered`` () =
-    let preconditions = [ Extractor.precondition<UserId, TestError> mockUserAuth ]
+    let preconditions = Extractor.precondition<UserId, TestError> mockUserAuth
 
     let result =
         Route.validatePreconditions<RouteNeedingPrecondition, TestError> preconditions
@@ -1117,8 +1111,8 @@ let ``validatePreconditions catches all missing preconditions`` () =
 [<Fact>]
 let ``validatePreconditions passes when all multiple preconditions registered`` () =
     let preconditions =
-        [ Extractor.precondition<UserId, TestError> mockUserAuth
-          Extractor.precondition<AdminId, TestError> mockAdminAuth ]
+        [ yield! Extractor.precondition<UserId, TestError> mockUserAuth
+          yield! Extractor.precondition<AdminId, TestError> mockAdminAuth ]
 
     let result =
         Route.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
@@ -1143,8 +1137,7 @@ let ``validatePreconditions requires OverridablePreCondition preconditions too``
 
 [<Fact>]
 let ``validatePreconditions passes with OverridablePreCondition precondition registered`` () =
-    let preconditions =
-        [ Extractor.overridablePrecondition<UserId, TestError> mockUserAuth ]
+    let preconditions = Extractor.precondition<UserId, TestError> mockUserAuth
 
     let result =
         Route.validatePreconditions<RouteWithOverridablePreCondition, TestError> preconditions
@@ -1157,7 +1150,7 @@ let ``validatePreconditions passes with OverridablePreCondition precondition reg
 
 [<Fact>]
 let ``validate combines structure and precondition validation`` () =
-    let preconditions = [ Extractor.precondition<UserId, TestError> mockUserAuth ]
+    let preconditions = Extractor.precondition<UserId, TestError> mockUserAuth
 
     let result = Route.validate<RouteNeedingPrecondition, TestError> preconditions
 
@@ -1269,7 +1262,7 @@ type ReturnsRoute =
     | WithAuth of PreCondition<UserId> * Returns<Fortune>
 
 let hydrateReturns () =
-    Route.extractor<ReturnsRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<ReturnsRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 [<Fact>]
 let ``Returns field gets default value during hydration`` () =
@@ -1364,10 +1357,10 @@ let createMockContextWithFormBody (fields: (string * string) list) =
     context :> HttpContext
 
 let hydrateJsonBody () =
-    Route.extractor<JsonBodyRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<JsonBodyRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 let hydrateFormBody () =
-    Route.extractor<FormBodyRoute, TestError> [ userPrecondition () ] [] makeError combineErrors
+    Route.extractor<FormBodyRoute, TestError> (userPreconditions ()) [] makeError combineErrors
 
 [<Fact>]
 let ``JsonBody deserializes record from body`` () =

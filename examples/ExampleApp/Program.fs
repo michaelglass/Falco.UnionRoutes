@@ -60,9 +60,8 @@ let slugParser =
 
 let endpointConfig: EndpointConfig<AppError> =
     { Preconditions =
-        [ Extractor.precondition<UserId, AppError> Handlers.requireAuth
-          Extractor.overridablePrecondition<UserId, AppError> Handlers.requireAuth
-          Extractor.precondition<AdminId, AppError> Handlers.requireAdmin ]
+        [ yield! Extractor.precondition<UserId, AppError> Handlers.requireAuth
+          yield! Extractor.precondition<AdminId, AppError> Handlers.requireAdmin ]
       Parsers = [ slugParser ]
       MakeError = fun msg -> BadRequest msg
       CombineErrors =
