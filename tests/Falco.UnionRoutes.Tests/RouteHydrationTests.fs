@@ -1517,3 +1517,69 @@ let ``FormBody returns error for missing form`` () =
         let! result = pipeline ctx
         test <@ Result.isError result @>
     }
+
+// =============================================================================
+// Unsupported field type error tests
+// =============================================================================
+
+type TupleFieldRoute = TupleBad of value: (int * string)
+
+type HydrationRecord = { X: int }
+type RecordFieldRoute = RecordBad of value: HydrationRecord
+
+type DateTimeFieldRoute = DateTimeBad of value: DateTime
+
+type BadOptionRoute = BadOption of id: Guid option
+
+[<Fact>]
+let ``extractor fails for tuple field type`` () =
+    task {
+        let hydrate =
+            Route.extractor<TupleFieldRoute, TestError> [] [] makeError combineErrors
+
+        let ctx = createMockContextWithRoute [ ("value", "test") ]
+
+        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (TupleFieldRoute.TupleBad(0, "")) ctx :> Task)
+
+        test <@ ex.Message.Contains("Tuple") @>
+    }
+
+[<Fact>]
+let ``extractor fails for record field type`` () =
+    task {
+        let hydrate =
+            Route.extractor<RecordFieldRoute, TestError> [] [] makeError combineErrors
+
+        let ctx = createMockContextWithRoute [ ("value", "test") ]
+
+        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (RecordFieldRoute.RecordBad { X = 0 }) ctx :> Task)
+
+        test <@ ex.Message.Contains("Record") @>
+    }
+
+[<Fact>]
+let ``extractor fails for unsupported field type`` () =
+    task {
+        let hydrate =
+            Route.extractor<DateTimeFieldRoute, TestError> [] [] makeError combineErrors
+
+        let ctx = createMockContextWithRoute [ ("value", "2021-01-01") ]
+
+        let! ex =
+            Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (DateTimeFieldRoute.DateTimeBad DateTime.MinValue) ctx :> Task)
+
+        test <@ ex.Message.Contains("Don't know how to extract") @>
+    }
+
+[<Fact>]
+let ``extractor fails for option on non-QueryParam field`` () =
+    task {
+        let hydrate =
+            Route.extractor<BadOptionRoute, TestError> [] [] makeError combineErrors
+
+        let ctx = createMockContextWithRoute [ ("id", Guid.NewGuid().ToString()) ]
+
+        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (BadOptionRoute.BadOption None) ctx :> Task)
+
+        test <@ ex.Message.Contains("Option types only supported for QueryParam") @>
+    }
