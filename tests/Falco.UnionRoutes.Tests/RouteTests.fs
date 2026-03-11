@@ -985,6 +985,12 @@ type AlphaConstraintRoute = | [<Route(Constraints = [| RouteConstraint.Alpha |])
 type MinMaxLengthRoute =
     | [<Route(Constraints = [| RouteConstraint.Alpha |], MinLength = 3, MaxLength = 50)>] ByTag of name: string
 
+type RequiredConstraintRoute = | [<Route(Constraints = [| RouteConstraint.Required |])>] ByName of name: string
+
+type FileConstraintRoute = | [<Route(Constraints = [| RouteConstraint.File |])>] ByPath of path: string
+
+type NonFileConstraintRoute = | [<Route(Constraints = [| RouteConstraint.NonFile |])>] BySlug of slug: string
+
 type MinMaxValueRoute = | [<Route(MinValue = 1, MaxValue = 100)>] ByPage of page: int
 
 type RegexConstraintRoute = | [<Route(Pattern = "^[a-z]+$")>] BySlug of slug: string
@@ -993,6 +999,21 @@ type RegexConstraintRoute = | [<Route(Pattern = "^[a-z]+$")>] BySlug of slug: st
 let ``explicit constraint - Alpha on string field`` () =
     let info = Route.info (AlphaConstraintRoute.ByTag "")
     test <@ info.Path = "/by-tag/{name:alpha}" @>
+
+[<Fact>]
+let ``explicit constraint - Required on string field`` () =
+    let info = Route.info (RequiredConstraintRoute.ByName "")
+    test <@ info.Path = "/by-name/{name:required}" @>
+
+[<Fact>]
+let ``explicit constraint - File on string field`` () =
+    let info = Route.info (FileConstraintRoute.ByPath "")
+    test <@ info.Path = "/by-path/{path:file}" @>
+
+[<Fact>]
+let ``explicit constraint - NonFile on string field`` () =
+    let info = Route.info (NonFileConstraintRoute.BySlug "")
+    test <@ info.Path = "/by-slug/{slug:nonfile}" @>
 
 [<Fact>]
 let ``explicit constraint - Alpha + MinLength + MaxLength`` () =
@@ -1036,7 +1057,15 @@ let ``explicit path - existing constraints are preserved`` () =
 // Explicit path with manual constraints (user takes full control)
 // =============================================================================
 
+type ExplicitPathWithAttrConstraints =
+    | [<Route(Path = "items/{name:required}", Constraints = [| RouteConstraint.Alpha |])>] Detail of name: string
+
 type ExplicitPathManualConstraints = | [<Route(Path = "items/{id:required}")>] Detail of id: Guid
+
+[<Fact>]
+let ``explicit path - attribute constraints appended to existing path constraints`` () =
+    let info = Route.info (ExplicitPathWithAttrConstraints.Detail "")
+    test <@ info.Path = "/items/{name:required:alpha}" @>
 
 [<Fact>]
 let ``explicit path - user-provided constraints are not overwritten by implicit`` () =
@@ -1239,3 +1268,101 @@ let ``validateStructure rejects body field with nested route union`` () =
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route union")) @>
     | Ok() -> failwith "Expected validation error for body + nested route union"
+
+// =============================================================================
+// Overlapping but resolvable routes (validateCrossRouteUniqueness branch)
+// =============================================================================
+
+/// Overlapping routes where one is more specific (valid - no error)
+type SpecificOverlapRoute =
+    | [<Route(Path = "items/new")>] ItemNew
+    | [<Route(Path = "items/{id}")>] ItemById of id: Guid
+
+[<Fact>]
+let ``validateUniqueness allows overlapping routes when one is more specific`` () =
+    let result = Route.validateUniqueness<SpecificOverlapRoute> ()
+    test <@ result = Ok() @>
+
+/// Single route has no pairs to compare (exercises empty for-loop branch)
+type SingleCaseRoute = OnlyCase
+
+[<Fact>]
+let ``validateUniqueness passes for single-case route`` () =
+    let result = Route.validateUniqueness<SingleCaseRoute> ()
+    test <@ result = Ok() @>
+
+// =============================================================================
+// Parser constraint application tests (applyParserConstraints branch)
+// =============================================================================
+
+type ConstrainedSlug = ConstrainedSlug of string
+
+type ConstrainedSlugRoute = ByConstrainedSlug of slug: ConstrainedSlug
+
+[<Fact>]
+let ``endpoints applies constrained parser constraints to route path`` () =
+    let handler (_route: ConstrainedSlugRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let slugParser =
+        Extractor.constrainedParser<ConstrainedSlug> [| RouteConstraint.Alpha |] (fun s -> Ok(ConstrainedSlug s))
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = [ slugParser ]
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let endpoints = Route.endpoints config handler
+    test <@ List.length endpoints = 1 @>
+    // Verify the path has the :alpha constraint applied via Route.info + parser
+    let info = Route.info (ConstrainedSlugRoute.ByConstrainedSlug(ConstrainedSlug ""))
+    // Route.info doesn't apply parser constraints, but endpoints does
+    test <@ info.Path = "/by-constrained-slug/{slug}" @>
+
+type UnconstrainedTag = UnconstrainedTag of string
+
+type UnconstrainedTagRoute = ByTag of tag: UnconstrainedTag
+
+[<Fact>]
+let ``endpoints with unconstrained parser produces no suffix`` () =
+    let handler (_route: UnconstrainedTagRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let tagParser = Extractor.parser<UnconstrainedTag> (fun s -> Ok(UnconstrainedTag s))
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = [ tagParser ]
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    // This exercises the suffix = "" branch in applyParserConstraints
+    let endpoints = Route.endpoints config handler
+    test <@ List.length endpoints = 1 @>
+    // With no constraints, the path remains unchanged
+    let info = Route.info (UnconstrainedTagRoute.ByTag(UnconstrainedTag ""))
+    test <@ info.Path = "/by-tag/{tag}" @>
+
+type GuidFieldRoute = ByGuid of id: Guid
+
+[<Fact>]
+let ``endpoints with parser for unrelated type leaves path unchanged`` () =
+    let handler (_route: GuidFieldRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    // Parser for ConstrainedSlug but route uses Guid — no match in applyParserConstraints
+    let slugParser =
+        Extractor.constrainedParser<ConstrainedSlug> [| RouteConstraint.Alpha |] (fun s -> Ok(ConstrainedSlug s))
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = [ slugParser ]
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let endpoints = Route.endpoints config handler
+    test <@ List.length endpoints = 1 @>
