@@ -1592,8 +1592,7 @@ type NestedHydrationChild =
     | ChildList
     | ChildDetail of id: Guid
 
-type NestedHydrationParent =
-    | Parent of NestedHydrationChild
+type NestedHydrationParent = Parent of NestedHydrationChild
 
 let hydrateNestedHydration () =
     Route.extractor<NestedHydrationParent, TestError> [] [] makeError combineErrors
@@ -1659,8 +1658,7 @@ let ``respond serializes value as JSON`` () =
 
 type ExplicitConstraintSlug = ExplicitConstraintSlug of string
 
-type ExplicitConstraintRoute =
-    | [<Route(Path = "items/{slug:alpha}")>] BySlug of slug: ExplicitConstraintSlug
+type ExplicitConstraintRoute = | [<Route(Path = "items/{slug:alpha}")>] BySlug of slug: ExplicitConstraintSlug
 
 [<Fact>]
 let ``parser constraint not applied when path already has constraint`` () =
