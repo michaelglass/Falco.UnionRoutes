@@ -510,59 +510,52 @@ module Route =
     // fsharplint:disable-next-line FL0085
     let rec private extractLink (value: obj) : string list =
         let valueType = value.GetType()
+        let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+        let fieldInfos = case.GetFields()
+        let segmentPattern = getPathSegment case
 
-        if not (FSharpType.IsUnion(valueType)) then
-            []
-        else
-            let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
-            let fieldInfos = case.GetFields()
-            let segmentPattern = getPathSegment case
+        let nestedUnionFieldIndex =
+            fieldInfos |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
 
-            let nestedUnionFieldIndex =
-                fieldInfos |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+        let unwrapValue (v: obj) : obj =
+            let vType = v.GetType()
 
-            let unwrapValue (v: obj) : obj =
-                if isNull v then
-                    v
-                else
-                    let vType = v.GetType()
+            if isSingleCaseWrapper vType then
+                let _, fields = FSharpValue.GetUnionFields(v, vType)
+                fields.[0]
+            else
+                v
 
-                    if isSingleCaseWrapper vType then
-                        let _, fields = FSharpValue.GetUnionFields(v, vType)
-                        if fields.Length > 0 then fields.[0] else v
-                    else
-                        v
+        let segment =
+            if String.IsNullOrEmpty(segmentPattern) then
+                ""
+            else
+                fieldInfos
+                |> Array.indexed
+                |> Array.filter (fun (i, f) -> not (isNonRouteField f) && i < fieldValues.Length)
+                |> Array.fold
+                    (fun (seg: string) (i, f) ->
+                        let value = fieldValues.[i]
 
-            let segment =
-                if String.IsNullOrEmpty(segmentPattern) then
-                    ""
-                else
-                    fieldInfos
-                    |> Array.indexed
-                    |> Array.filter (fun (i, f) -> not (isNonRouteField f) && i < fieldValues.Length)
-                    |> Array.fold
-                        (fun (seg: string) (i, f) ->
-                            let value = fieldValues.[i]
+                        let valueStr =
+                            match unwrapValue value with
+                            | null -> ""
+                            | v -> v.ToString()
 
-                            let valueStr =
-                                match unwrapValue value with
-                                | null -> ""
-                                | v -> v.ToString()
+                        Regex.Replace(seg, @"\{" + Regex.Escape(f.Name) + @"(:[^}]*)?\}", valueStr))
+                    segmentPattern
 
-                            Regex.Replace(seg, @"\{" + Regex.Escape(f.Name) + @"(:[^}]*)?\}", valueStr))
-                        segmentPattern
+        match nestedUnionFieldIndex with
+        | Some idx ->
+            let nestedValue = fieldValues.[idx]
+            let nestedSegments = extractLink nestedValue
 
-            match nestedUnionFieldIndex with
-            | Some idx ->
-                let nestedValue = fieldValues.[idx]
-                let nestedSegments = extractLink nestedValue
+            if segment = "" then
+                nestedSegments
+            else
+                segment :: nestedSegments
 
-                if segment = "" then
-                    nestedSegments
-                else
-                    segment :: nestedSegments
-
-            | None -> if segment = "" then [] else [ segment ]
+        | None -> if segment = "" then [] else [ segment ]
 
     /// <summary>Generates a concrete URL path from a route value by substituting actual field values.</summary>
     /// <typeparam name="T">The route union type.</typeparam>
@@ -635,36 +628,33 @@ module Route =
     /// Enumerate all values of a union type
     // fsharplint:disable-next-line FL0085
     let rec private enumerateUnionValues (unionType: Type) : obj list =
-        if not (FSharpType.IsUnion(unionType)) then
-            []
-        else
-            FSharpType.GetUnionCases(unionType)
-            |> Array.toList
-            |> List.collect (fun case ->
-                let fields = case.GetFields()
+        FSharpType.GetUnionCases(unionType)
+        |> Array.toList
+        |> List.collect (fun case ->
+            let fields = case.GetFields()
 
-                let nestedRouteField =
-                    fields |> Array.tryFind (fun f -> isNestedRouteUnion f.PropertyType)
+            let nestedRouteField =
+                fields |> Array.tryFind (fun f -> isNestedRouteUnion f.PropertyType)
 
-                match nestedRouteField with
-                | Some fieldInfo ->
-                    let nestedValues = enumerateUnionValues fieldInfo.PropertyType
+            match nestedRouteField with
+            | Some fieldInfo ->
+                let nestedValues = enumerateUnionValues fieldInfo.PropertyType
 
-                    nestedValues
-                    |> List.map (fun nestedValue ->
-                        let args =
-                            fields
-                            |> Array.map (fun f ->
-                                if f.Name = fieldInfo.Name then
-                                    nestedValue
-                                else
-                                    getDefaultValue f.PropertyType)
+                nestedValues
+                |> List.map (fun nestedValue ->
+                    let args =
+                        fields
+                        |> Array.map (fun f ->
+                            if f.Name = fieldInfo.Name then
+                                nestedValue
+                            else
+                                getDefaultValue f.PropertyType)
 
-                        FSharpValue.MakeUnion(case, args))
+                    FSharpValue.MakeUnion(case, args))
 
-                | None ->
-                    let args = fields |> Array.map (fun f -> getDefaultValue f.PropertyType)
-                    [ FSharpValue.MakeUnion(case, args) ])
+            | None ->
+                let args = fields |> Array.map (fun f -> getDefaultValue f.PropertyType)
+                [ FSharpValue.MakeUnion(case, args) ])
 
     /// <summary>Enumerates all route cases for a route union type.</summary>
     /// <typeparam name="TRoute">The route union type to enumerate.</typeparam>
@@ -791,21 +781,18 @@ module Route =
               yield! validatePathParamsMatchFields case path ]
 
     let rec private validateUnionType (unionType: Type) : string list =
-        if not (FSharpType.IsUnion(unionType)) then
-            []
-        else
-            FSharpType.GetUnionCases(unionType)
-            |> Array.toList
-            |> List.collect (fun case ->
-                let caseErrors = validateCase case
+        FSharpType.GetUnionCases(unionType)
+        |> Array.toList
+        |> List.collect (fun case ->
+            let caseErrors = validateCase case
 
-                let nestedErrors =
-                    case.GetFields()
-                    |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
-                    |> Array.toList
-                    |> List.collect (fun f -> validateUnionType f.PropertyType)
+            let nestedErrors =
+                case.GetFields()
+                |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+                |> Array.toList
+                |> List.collect (fun f -> validateUnionType f.PropertyType)
 
-                caseErrors @ nestedErrors)
+            caseErrors @ nestedErrors)
 
     /// <summary>Validates route structure including paths and field-to-parameter consistency.</summary>
     /// <typeparam name="Route">The route union type to validate.</typeparam>
@@ -1033,21 +1020,17 @@ module Route =
     /// Walk route hierarchy to find the leaf case info
     let rec private findLeafCaseInfo (value: obj) : UnionCaseInfo =
         let valueType = value.GetType()
+        let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+        let fields = caseInfo.GetFields()
 
-        if not (FSharpType.IsUnion(valueType)) then
-            failwith $"Expected union type, got {valueType.Name}"
-        else
-            let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
-            let fields = caseInfo.GetFields()
+        let nestedUnionFieldIndex =
+            fields |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
 
-            let nestedUnionFieldIndex =
-                fields |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
-
-            match nestedUnionFieldIndex with
-            | Some idx ->
-                let nestedValue = fieldValues.[idx]
-                findLeafCaseInfo nestedValue
-            | None -> caseInfo
+        match nestedUnionFieldIndex with
+        | Some idx ->
+            let nestedValue = fieldValues.[idx]
+            findLeafCaseInfo nestedValue
+        | None -> caseInfo
 
     let private boxSome (innerType: Type) (value: obj) : obj =
         let someCase =
@@ -1225,33 +1208,30 @@ module Route =
         | FromExtraction of Result<obj, string>
 
     let rec private collectPreconditionTypes (unionType: Type) : Type list =
-        if not (FSharpType.IsUnion(unionType)) then
-            []
-        else
-            FSharpType.GetUnionCases(unionType)
-            |> Array.toList
-            |> List.collect (fun case ->
-                let fields = case.GetFields()
+        FSharpType.GetUnionCases(unionType)
+        |> Array.toList
+        |> List.collect (fun case ->
+            let fields = case.GetFields()
 
-                let preconditionTypes =
-                    fields
-                    |> Array.choose (fun f ->
-                        if tryGetPreInfo f.PropertyType |> Option.isSome then
-                            Some f.PropertyType
-                        elif tryGetOptPreInfo f.PropertyType |> Option.isSome then
-                            Some f.PropertyType
-                        else
-                            None)
-                    |> Array.toList
+            let preconditionTypes =
+                fields
+                |> Array.choose (fun f ->
+                    if tryGetPreInfo f.PropertyType |> Option.isSome then
+                        Some f.PropertyType
+                    elif tryGetOptPreInfo f.PropertyType |> Option.isSome then
+                        Some f.PropertyType
+                    else
+                        None)
+                |> Array.toList
 
-                let nestedTypes =
-                    fields
-                    |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
-                    |> Array.toList
-                    |> List.collect (fun f -> collectPreconditionTypes f.PropertyType)
+            let nestedTypes =
+                fields
+                |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+                |> Array.toList
+                |> List.collect (fun f -> collectPreconditionTypes f.PropertyType)
 
-                preconditionTypes @ nestedTypes)
-            |> List.distinct
+            preconditionTypes @ nestedTypes)
+        |> List.distinct
 
     let private formatTypeName (t: Type) : string =
         if t.IsGenericType then
@@ -1347,114 +1327,101 @@ module Route =
         : Task<Result<obj, 'E>> =
 
         let valueType = value.GetType()
+        let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+        let fields = caseInfo.GetFields()
 
-        if not (FSharpType.IsUnion(valueType)) then
+        if fields.Length = 0 then
             Task.FromResult(Ok value)
         else
-            let caseInfo, fieldValues = FSharpValue.GetUnionFields(value, valueType)
-            let fields = caseInfo.GetFields()
+            task {
+                let hasParser fieldType =
+                    parsers |> List.exists (fun p -> p.ForType = fieldType)
 
-            if fields.Length = 0 then
-                Task.FromResult(Ok value)
-            else
-                task {
-                    let hasParser fieldType =
-                        parsers |> List.exists (fun p -> p.ForType = fieldType)
+                let! fieldResults =
+                    fields
+                    |> Array.mapi (fun i field ->
+                        task {
+                            match field.PropertyType with
+                            | NestedRouteUnion when not (hasParser field.PropertyType) ->
+                                let! result =
+                                    hydrateValue
+                                        preconditions
+                                        parsers
+                                        makeError
+                                        combineErrors
+                                        leafCaseInfo
+                                        fieldValues.[i]
+                                        ctx
 
-                    let! fieldResults =
-                        fields
-                        |> Array.mapi (fun i field ->
-                            task {
-                                match field.PropertyType with
-                                | NestedRouteUnion when not (hasParser field.PropertyType) ->
-                                    let! result =
-                                        hydrateValue
-                                            preconditions
-                                            parsers
-                                            makeError
-                                            combineErrors
-                                            leafCaseInfo
-                                            fieldValues.[i]
-                                            ctx
+                                match result with
+                                | Ok hydratedNested -> return FromExtraction(Ok hydratedNested)
+                                | Error e -> return FromPrecondition(Error e)
+                            | ReturnsField -> return FromExtraction(Ok(getDefaultValue field.PropertyType))
+                            | JsonBodyField ->
+                                try
+                                    let innerType = field.PropertyType.GetGenericArguments().[0]
 
-                                    match result with
-                                    | Ok hydratedNested -> return FromExtraction(Ok hydratedNested)
-                                    | Error e -> return FromPrecondition(Error e)
-                                | ReturnsField -> return FromExtraction(Ok(getDefaultValue field.PropertyType))
-                                | JsonBodyField ->
-                                    try
-                                        let innerType = field.PropertyType.GetGenericArguments().[0]
+                                    let! body =
+                                        JsonSerializer.DeserializeAsync(
+                                            ctx.Request.Body,
+                                            innerType,
+                                            cancellationToken = ctx.RequestAborted
+                                        )
 
-                                        let! body =
-                                            JsonSerializer.DeserializeAsync(
-                                                ctx.Request.Body,
-                                                innerType,
-                                                cancellationToken = ctx.RequestAborted
-                                            )
+                                    let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                    return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
+                                with ex ->
+                                    return FromExtraction(Error $"Failed to read JSON body: {ex.Message}")
+                            | FormBodyField ->
+                                try
+                                    let innerType = field.PropertyType.GetGenericArguments().[0]
+                                    let! form = ctx.Request.ReadFormAsync(ctx.RequestAborted)
+                                    let jsonDict = Dictionary<string, obj>()
 
-                                        let case = FSharpType.GetUnionCases(field.PropertyType).[0]
-                                        return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
-                                    with ex ->
-                                        return FromExtraction(Error $"Failed to read JSON body: {ex.Message}")
-                                | FormBodyField ->
-                                    try
-                                        let innerType = field.PropertyType.GetGenericArguments().[0]
-                                        let! form = ctx.Request.ReadFormAsync(ctx.RequestAborted)
-                                        let jsonDict = Dictionary<string, obj>()
+                                    for kvp in form do
+                                        let sv = kvp.Value
+                                        jsonDict.[kvp.Key] <- string sv
 
-                                        for kvp in form do
-                                            let sv = kvp.Value
-                                            jsonDict.[kvp.Key] <- string sv
+                                    let options = JsonSerializerOptions()
 
-                                        let options = JsonSerializerOptions()
+                                    options.NumberHandling <- JsonNumberHandling.AllowReadingFromString
 
-                                        options.NumberHandling <- JsonNumberHandling.AllowReadingFromString
+                                    let json = JsonSerializer.Serialize(jsonDict)
+                                    let body = JsonSerializer.Deserialize(json, innerType, options)
+                                    let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                    return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
+                                with ex ->
+                                    return FromExtraction(Error $"Failed to read form body: {ex.Message}")
+                            | OptPreconditionField when
+                                tryGetOptPreInfo field.PropertyType
+                                |> Option.exists (fun innerType -> shouldSkipOptPrecondition leafCaseInfo innerType)
+                                ->
+                                return FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
+                            | _ ->
+                                match findPrecondition preconditions field.PropertyType with
+                                | Some precondition ->
+                                    let! result = precondition.Extract ctx
+                                    return FromPrecondition(result)
+                                | None -> return FromExtraction(extractField parsers field.Name field.PropertyType ctx)
+                        })
+                    |> Task.WhenAll
 
-                                        let json = JsonSerializer.Serialize(jsonDict)
-                                        let body = JsonSerializer.Deserialize(json, innerType, options)
-                                        let case = FSharpType.GetUnionCases(field.PropertyType).[0]
-                                        return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
-                                    with ex ->
-                                        return FromExtraction(Error $"Failed to read form body: {ex.Message}")
-                                | OptPreconditionField when
-                                    tryGetOptPreInfo field.PropertyType
-                                    |> Option.exists (fun innerType ->
-                                        shouldSkipOptPrecondition leafCaseInfo innerType)
-                                    ->
-                                    return FromExtraction(Ok(createSkippedOptPreValue field.PropertyType))
-                                | _ ->
-                                    match findPrecondition preconditions field.PropertyType with
-                                    | Some precondition ->
-                                        let! result = precondition.Extract ctx
-                                        return FromPrecondition(result)
-                                    | None ->
-                                        return FromExtraction(extractField parsers field.Name field.PropertyType ctx)
-                            })
-                        |> Task.WhenAll
+                let errors = ResizeArray()
+                let values = Array.zeroCreate fieldResults.Length
 
-                    let allErrors =
-                        fieldResults
-                        |> Array.choose (function
-                            | FromPrecondition(Error e) -> Some e
-                            | FromExtraction(Error e) -> Some(makeError e)
-                            | FromPrecondition(Ok _) -> None
-                            | FromExtraction(Ok _) -> None)
-                        |> Array.toList
+                for i in 0 .. fieldResults.Length - 1 do
+                    match fieldResults.[i] with
+                    | FromPrecondition(Ok v)
+                    | FromExtraction(Ok v) -> values.[i] <- v
+                    | FromPrecondition(Error e) -> errors.Add(e)
+                    | FromExtraction(Error e) -> errors.Add(makeError e)
 
-                    if allErrors.Length > 0 then
-                        return Error(combineErrors allErrors)
-                    else
-                        let values =
-                            fieldResults
-                            |> Array.map (function
-                                | FromPrecondition(Ok v) -> v
-                                | FromExtraction(Ok v) -> v
-                                | FromPrecondition(Error _) -> failwith "unreachable"
-                                | FromExtraction(Error _) -> failwith "unreachable")
-
-                        let hydrated = FSharpValue.MakeUnion(caseInfo, values)
-                        return Ok hydrated
-                }
+                if errors.Count > 0 then
+                    return Error(combineErrors (Seq.toList errors))
+                else
+                    let hydrated = FSharpValue.MakeUnion(caseInfo, values)
+                    return Ok hydrated
+            }
 
     /// Creates an extraction function that populates route fields from HTTP context.
     /// Internal - used by Route.endpoints. Hydration is recursive.
@@ -1494,26 +1461,22 @@ module Route =
     /// Collect path field names and types from a specific route value by walking the union hierarchy
     let rec private collectPathFields (value: obj) : (string * Type) list =
         let valueType = value.GetType()
+        let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+        let fields = case.GetFields()
 
-        if not (FSharpType.IsUnion(valueType)) then
-            []
-        else
-            let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
-            let fields = case.GetFields()
+        let pathFields =
+            fields
+            |> Array.filter (fun f -> not (isNonRouteField f))
+            |> Array.map (fun f -> (f.Name, f.PropertyType))
+            |> Array.toList
 
-            let pathFields =
-                fields
-                |> Array.filter (fun f -> not (isNonRouteField f))
-                |> Array.map (fun f -> (f.Name, f.PropertyType))
-                |> Array.toList
+        let nestedFields =
+            fields
+            |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+            |> Option.map (fun idx -> collectPathFields fieldValues.[idx])
+            |> Option.defaultValue []
 
-            let nestedFields =
-                fields
-                |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
-                |> Option.map (fun idx -> collectPathFields fieldValues.[idx])
-                |> Option.defaultValue []
-
-            pathFields @ nestedFields
+        pathFields @ nestedFields
 
     /// Post-process a route path to add parser-derived constraints to bare params
     let private applyParserConstraints (parsers: FieldParser list) (routeValue: obj) (path: string) : string =
