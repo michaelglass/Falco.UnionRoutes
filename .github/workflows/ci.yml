@@ -57,14 +57,14 @@ jobs:
       - name: Test with coverage
         run: |
           dotnet test --no-build --verbosity normal \
-            --logger "trx;LogFileName=test-results.trx" \
-            --collect:"XPlat Code Coverage" \
-            --results-directory ./coverage
+            --coverage \
+            --coverage-output-format cobertura \
+            --coverage-output "$PWD/coverage/coverage.cobertura.xml"
 
       - name: Generate coverage report
         uses: danielpalme/ReportGenerator-GitHub-Action@5
         with:
-          reports: ./coverage/**/coverage.cobertura.xml
+          reports: ./coverage/coverage.cobertura.xml
           targetdir: ./coverage/report
           reporttypes: Cobertura;MarkdownSummaryGithub;Html
 
@@ -88,27 +88,12 @@ jobs:
           recreate: true
           path: code-coverage-results.md
 
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: test-results
-          path: "**/*.trx"
-
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: coverage-report
           path: ./coverage/report
-
-      - name: Test report
-        uses: dorny/test-reporter@v1
-        if: always()
-        with:
-          name: Test Results
-          path: "**/*.trx"
-          reporter: dotnet-trx
 
   deploy-docs:
     runs-on: ubuntu-latest
