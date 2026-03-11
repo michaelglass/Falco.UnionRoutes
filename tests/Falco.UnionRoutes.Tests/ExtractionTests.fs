@@ -327,7 +327,9 @@ let ``Extraction.run calls handler on Ok`` () =
 [<Fact>]
 let ``Extraction.run calls error response on Error`` () =
     task {
-        let extractor: Extractor<int, TestError> = fun _ -> Task.FromResult(Error NotAuthenticated)
+        let extractor: Extractor<int, TestError> =
+            fun _ -> Task.FromResult(Error NotAuthenticated)
+
         let mutable errorCalled = false
 
         let handler (_value: int) : Falco.HttpHandler = fun _ctx -> Task.CompletedTask
@@ -381,7 +383,8 @@ let ``preconditionSync wraps sync extractor in Task`` () =
 [<Fact>]
 let ``preconditionSync returns error for failed sync extraction`` () =
     task {
-        let syncExtractor: SyncExtractor<UserId, TestError> = fun _ -> Error NotAuthenticated
+        let syncExtractor: SyncExtractor<UserId, TestError> =
+            fun _ -> Error NotAuthenticated
 
         let preconditions = Extractor.preconditionSync<UserId, TestError> syncExtractor
         let ctx = DefaultHttpContext() :> HttpContext

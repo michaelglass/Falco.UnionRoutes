@@ -1371,8 +1371,7 @@ let ``endpoints with parser for unrelated type leaves path unchanged`` () =
 // validate error path tests (structural + uniqueness errors)
 // =============================================================================
 
-type PathMismatchRoute =
-    | [<Route(Path = "items/{name}/{extra}")>] Bad of name: string
+type PathMismatchRoute = | [<Route(Path = "items/{name}/{extra}")>] Bad of name: string
 
 [<Fact>]
 let ``validate returns structural errors for mismatched path params`` () =
@@ -1391,7 +1390,12 @@ let ``validate returns uniqueness errors for duplicate paths`` () =
     let result = Route.validate<DuplicatePathRoute, string> []
 
     match result with
-    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate") || e.Contains("ambiguous")) @>
+    | Error errors ->
+        test
+            <@
+                errors
+                |> List.exists (fun e -> e.Contains("Duplicate") || e.Contains("ambiguous"))
+            @>
     | Ok() -> failwith "Expected validation error for duplicate paths"
 
 [<Fact>]
@@ -1428,11 +1432,9 @@ let ``endpoints throws on uniqueness validation errors`` () =
 // Nested route collectPreconditionTypes test
 // =============================================================================
 
-type NestedPreChild =
-    | ChildWithPre of PreCondition<Guid>
+type NestedPreChild = ChildWithPre of PreCondition<Guid>
 
-type NestedPreParent =
-    | Parent of NestedPreChild
+type NestedPreParent = Parent of NestedPreChild
 
 [<Fact>]
 let ``validate detects preconditions in nested route unions`` () =
