@@ -1366,3 +1366,78 @@ let ``endpoints with parser for unrelated type leaves path unchanged`` () =
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
+
+// =============================================================================
+// validate error path tests (structural + uniqueness errors)
+// =============================================================================
+
+type PathMismatchRoute =
+    | [<Route(Path = "items/{name}/{extra}")>] Bad of name: string
+
+[<Fact>]
+let ``validate returns structural errors for mismatched path params`` () =
+    let result = Route.validate<PathMismatchRoute, string> []
+
+    match result with
+    | Error errors -> test <@ errors.Length > 0 @>
+    | Ok() -> failwith "Expected validation error for mismatched path params"
+
+type DuplicatePathRoute =
+    | [<Route(Path = "items/{id}")>] First of id: Guid
+    | [<Route(Path = "items/{id}")>] Second of id: Guid
+
+[<Fact>]
+let ``validate returns uniqueness errors for duplicate paths`` () =
+    let result = Route.validate<DuplicatePathRoute, string> []
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate") || e.Contains("ambiguous")) @>
+    | Ok() -> failwith "Expected validation error for duplicate paths"
+
+[<Fact>]
+let ``endpoints throws on structural validation errors`` () =
+    let handler (_route: PathMismatchRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = []
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let ex = Assert.Throws<exn>(fun () -> Route.endpoints config handler |> ignore)
+    test <@ ex.Message.Contains("Route validation failed") @>
+
+[<Fact>]
+let ``endpoints throws on uniqueness validation errors`` () =
+    let handler (_route: DuplicatePathRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = []
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let ex = Assert.Throws<exn>(fun () -> Route.endpoints config handler |> ignore)
+    test <@ ex.Message.Contains("Route validation failed") @>
+
+// =============================================================================
+// Nested route collectPreconditionTypes test
+// =============================================================================
+
+type NestedPreChild =
+    | ChildWithPre of PreCondition<Guid>
+
+type NestedPreParent =
+    | Parent of NestedPreChild
+
+[<Fact>]
+let ``validate detects preconditions in nested route unions`` () =
+    let result = Route.validate<NestedPreParent, string> []
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Missing preconditions")) @>
+    | Ok() -> failwith "Expected validation error for missing nested preconditions"

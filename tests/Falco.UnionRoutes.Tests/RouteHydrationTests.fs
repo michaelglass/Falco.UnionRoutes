@@ -1583,3 +1583,102 @@ let ``extractor fails for option on non-QueryParam field`` () =
 
         test <@ ex.Message.Contains("Option types only supported for QueryParam") @>
     }
+
+// =============================================================================
+// Nested route hydration error propagation tests
+// =============================================================================
+
+type NestedHydrationChild =
+    | ChildList
+    | ChildDetail of id: Guid
+
+type NestedHydrationParent =
+    | Parent of NestedHydrationChild
+
+let hydrateNestedHydration () =
+    Route.extractor<NestedHydrationParent, TestError> [] [] makeError combineErrors
+
+[<Fact>]
+let ``nested route hydration propagates error from child`` () =
+    task {
+        let ctx = createMockContextWithRoute []
+
+        let pipeline =
+            hydrateNestedHydration () (NestedHydrationParent.Parent(NestedHydrationChild.ChildDetail Guid.Empty))
+
+        let! result = pipeline ctx
+        test <@ Result.isError result @>
+    }
+
+[<Fact>]
+let ``nested route hydration succeeds with valid params`` () =
+    task {
+        let id = Guid.NewGuid()
+        let ctx = createMockContextWithRoute [ ("id", id.ToString()) ]
+
+        let pipeline =
+            hydrateNestedHydration () (NestedHydrationParent.Parent(NestedHydrationChild.ChildDetail Guid.Empty))
+
+        let! result = pipeline ctx
+        test <@ result = Ok(NestedHydrationParent.Parent(NestedHydrationChild.ChildDetail id)) @>
+    }
+
+// =============================================================================
+// Query param error tests
+// =============================================================================
+
+[<Fact>]
+let ``query param with invalid int value returns error`` () =
+    task {
+        let ctx = createMockContextWithRouteAndQuery [] [ ("page", "not-a-number") ]
+        let pipeline = hydrateQuery () (QueryRoute.WithQueryInt(QueryParam 0))
+        let! result = pipeline ctx
+        test <@ Result.isError result @>
+    }
+
+// =============================================================================
+// respond tests
+// =============================================================================
+
+[<Fact>]
+let ``respond serializes value as JSON`` () =
+    task {
+        let ctx = DefaultHttpContext()
+        ctx.Response.Body <- new System.IO.MemoryStream()
+        let handler = Route.respond (Returns<{| x: int |}>()) {| x = 42 |}
+        do! handler ctx
+        ctx.Response.Body.Position <- 0L
+        let reader = new System.IO.StreamReader(ctx.Response.Body)
+        let! body = reader.ReadToEndAsync()
+        test <@ body.Contains("42") @>
+    }
+
+// =============================================================================
+// applyParserConstraints - already constrained path tests
+// =============================================================================
+
+type ExplicitConstraintSlug = ExplicitConstraintSlug of string
+
+type ExplicitConstraintRoute =
+    | [<Route(Path = "items/{slug:alpha}")>] BySlug of slug: ExplicitConstraintSlug
+
+[<Fact>]
+let ``parser constraint not applied when path already has constraint`` () =
+    let slugParser =
+        Extractor.constrainedParser<ExplicitConstraintSlug> [| RouteConstraint.Alpha |] (fun s ->
+            Ok(ExplicitConstraintSlug s))
+
+    let handler (_route: ExplicitConstraintRoute) : Falco.HttpHandler =
+        fun _ctx -> System.Threading.Tasks.Task.CompletedTask
+
+    let config: EndpointConfig<string> =
+        { Preconditions = []
+          Parsers = [ slugParser ]
+          MakeError = id
+          CombineErrors = String.concat "; "
+          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+
+    let endpoints = Route.endpoints config handler
+    test <@ List.length endpoints = 1 @>
+    let info = Route.info (ExplicitConstraintRoute.BySlug(ExplicitConstraintSlug ""))
+    test <@ info.Path = "/items/{slug:alpha}" @>

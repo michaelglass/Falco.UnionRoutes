@@ -25,14 +25,11 @@ let excludedPatterns = [| "Test"; "AssemblyInfo"; "AssemblyAttributes" |]
 let overrides =
     Map.ofList
         [ // Route.fs: Compiler-generated closure classes for lambdas have uncovered lines
-          // (unwrapValue@525, segment@544, applyConstraintsToExplicitPath@392, etc.)
           // plus defensive failwith paths for unsupported types that are never triggered.
           // Branch: enum exhaustiveness in toHttpMethod, pattern match guards, for-loop branches
-          "Route.fs", (95.0, 82.0) // (minLine, minBranch)
+          "Route.fs", (97.0, 84.0) // (minLine, minBranch)
           // Spec.fs: F# generates extra branches for nested match on option+DU
-          "Spec.fs", (100.0, 86.0)
-          // Extraction.fs: Compiler-generated closure class for Extraction.run@488
-          "Extraction.fs", (84.0, 100.0) ]
+          "Spec.fs", (100.0, 86.0) ]
 
 // ============================================================================
 // Types

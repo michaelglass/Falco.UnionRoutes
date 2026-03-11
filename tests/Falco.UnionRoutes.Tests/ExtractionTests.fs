@@ -298,3 +298,93 @@ let ``Real-world: auth failure short-circuits`` () =
         let! result = combined ctx
         test <@ result = Error NotAuthenticated @>
     }
+
+// =============================================================================
+// Extraction.run tests
+// =============================================================================
+
+[<Fact>]
+let ``Extraction.run calls handler on Ok`` () =
+    task {
+        let extractor: Extractor<int, TestError> = fun _ -> Task.FromResult(Ok 42)
+        let mutable handlerCalled = false
+
+        let handler (value: int) : Falco.HttpHandler =
+            fun ctx ->
+                task {
+                    handlerCalled <- true
+                    test <@ value = 42 @>
+                }
+
+        let toResponse (_e: TestError) : Falco.HttpHandler = fun _ctx -> Task.CompletedTask
+
+        let pipeline = Extraction.run toResponse extractor handler
+        let ctx = DefaultHttpContext() :> HttpContext
+        do! pipeline ctx
+        test <@ handlerCalled @>
+    }
+
+[<Fact>]
+let ``Extraction.run calls error response on Error`` () =
+    task {
+        let extractor: Extractor<int, TestError> = fun _ -> Task.FromResult(Error NotAuthenticated)
+        let mutable errorCalled = false
+
+        let handler (_value: int) : Falco.HttpHandler = fun _ctx -> Task.CompletedTask
+
+        let toResponse (e: TestError) : Falco.HttpHandler =
+            fun _ctx ->
+                task {
+                    errorCalled <- true
+                    test <@ e = NotAuthenticated @>
+                }
+
+        let pipeline = Extraction.run toResponse extractor handler
+        let ctx = DefaultHttpContext() :> HttpContext
+        do! pipeline ctx
+        test <@ errorCalled @>
+    }
+
+// =============================================================================
+// Extractor.preconditionSync tests
+// =============================================================================
+
+[<Fact>]
+let ``preconditionSync wraps sync extractor in Task`` () =
+    task {
+        let syncExtractor: SyncExtractor<UserId, TestError> =
+            fun ctx ->
+                match ctx.Request.Headers.TryGetValue("X-User-Id") with
+                | true, values ->
+                    match Guid.TryParse(values.ToString()) with
+                    | true, guid -> Ok(UserId guid)
+                    | false, _ -> Error NotAuthenticated
+                | false, _ -> Error NotAuthenticated
+
+        let preconditions = Extractor.preconditionSync<UserId, TestError> syncExtractor
+        test <@ preconditions.Length = 2 @>
+
+        let userId = Guid.NewGuid()
+        let ctx = DefaultHttpContext() :> HttpContext
+        ctx.Request.Headers.Append("X-User-Id", userId.ToString())
+
+        let! result = preconditions.[0].Extract ctx
+
+        match result with
+        | Ok v ->
+            let typedValue = v :?> PreCondition<UserId>
+            let (PreCondition(UserId uid)) = typedValue
+            test <@ uid = userId @>
+        | Error _ -> failwith "Expected Ok"
+    }
+
+[<Fact>]
+let ``preconditionSync returns error for failed sync extraction`` () =
+    task {
+        let syncExtractor: SyncExtractor<UserId, TestError> = fun _ -> Error NotAuthenticated
+
+        let preconditions = Extractor.preconditionSync<UserId, TestError> syncExtractor
+        let ctx = DefaultHttpContext() :> HttpContext
+        let! result = preconditions.[0].Extract ctx
+        test <@ Result.isError result @>
+    }
