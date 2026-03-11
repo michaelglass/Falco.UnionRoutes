@@ -5,6 +5,10 @@ dotnet = "10.0"
 description = "Restore dependencies"
 run = "dotnet restore"
 
+[tasks.tool-restore]
+description = "Restore local dotnet tools"
+run = "dotnet tool restore"
+
 [tasks.build]
 description = "Build the solution"
 run = "dotnet build"
@@ -12,7 +16,12 @@ depends = ["restore"]
 
 [tasks.test]
 description = "Run tests with coverage"
-run = "dotnet test --collect:\"XPlat Code Coverage\" --results-directory ./coverage"
+run = """
+dotnet test \
+  --coverage \
+  --coverage-output-format cobertura \
+  --coverage-output "$PWD/coverage/coverage.cobertura.xml"
+"""
 depends = ["build"]
 
 [tasks.example]
@@ -33,15 +42,17 @@ depends = ["build"]
 [tasks.format]
 description = "Format code with Fantomas"
 run = "dotnet fantomas src/ tests/ examples/ tools/"
+depends = ["tool-restore"]
 
 [tasks.format-check]
 description = "Check formatting without making changes"
 run = "dotnet fantomas src/ tests/ examples/ tools/ --check"
+depends = ["tool-restore"]
 
 [tasks.lint]
 description = "Run FSharpLint"
 run = "dotnet fsharplint lint Falco.UnionRoutes.sln"
-depends = ["build"]
+depends = ["build", "tool-restore"]
 
 [tasks.coverage-check]
 description = "Check per-file coverage meets minimum threshold (50%)"
@@ -77,9 +88,9 @@ depends = ["build"]
 [tasks.docs]
 description = "Generate API documentation"
 run = "dotnet fsdocs build --output output/docs --clean"
-depends = ["build"]
+depends = ["build", "tool-restore"]
 
 [tasks.docs-watch]
 description = "Watch and serve documentation locally"
 run = "dotnet fsdocs watch"
-depends = ["build"]
+depends = ["build", "tool-restore"]
