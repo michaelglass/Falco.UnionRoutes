@@ -468,7 +468,7 @@ module UI =
         | NoChange -> printfn "\nNo API changes detected."
 
     let showHelp () =
-        printfn "Usage: mise run release [command] [--publish]"
+        printfn "Usage: script/release.fsx [command] [--publish]"
         printfn ""
         printfn "Versioning:"
         printfn "  alpha/beta  - just bump prerelease number (no API check)"
@@ -568,7 +568,7 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
                     None
 
         match bump with
-        | None -> NeedsExplicitCommand "No previous releases. Use 'mise run release alpha' for first release."
+        | None -> NeedsExplicitCommand "No previous releases. Use 'script/release.fsx alpha' for first release."
         | Some bump ->
             let newTag = Version.toTag bump.NewVersion
 
