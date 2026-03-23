@@ -154,6 +154,28 @@ Route.link (Article (Slug "hello-world")) = "{Route.link (Article(Slug "hello-wo
 Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}), List)) = "{Route.link (Items(UserId sampleId, OverridablePreCondition(UserId sampleId), ItemRoute.List))}"
 Route.link (Tag "fsharp") = "{Route.link (Tag "fsharp")}" """ ]
 
+          // Route.createMatcher / Route.matchUrl examples
+          Elem.h2 [] [ Text.raw "Route.createMatcher examples" ]
+          Elem.pre
+              []
+              [ Text.raw (
+                    let routeMatcher = Route.createMatcher<Route> ()
+
+                    let matchResult url method =
+                        match routeMatcher.Match(method, url) with
+                        | Ok route -> $"%A{route}"
+                        | Error Route.NoMatchingRoute -> "NoMatchingRoute"
+                        | Error(Route.ParameterError(_, name, value, expected)) ->
+                            $"ParameterError: '%s{name}' value '%s{value}' is not a valid %s{expected}"
+
+                    $"""matcher.Match(GET, "/") = {matchResult "/" HttpMethod.Get}
+matcher.Match(GET, "/health") = {matchResult "/health" HttpMethod.Get}
+matcher.Match(GET, "/posts/{sampleId}") = {matchResult $"/posts/{sampleId}" HttpMethod.Get}
+matcher.Match(DELETE, "/posts/{sampleId}") = {matchResult $"/posts/{sampleId}" HttpMethod.Delete}
+matcher.Match(GET, "/posts/not-a-guid") = {matchResult "/posts/not-a-guid" HttpMethod.Get}
+matcher.Match(GET, "/nonexistent") = {matchResult "/nonexistent" HttpMethod.Get}"""
+                ) ]
+
           // curl examples
           Elem.h2 [] [ Text.raw "Try with curl" ]
           Elem.pre
