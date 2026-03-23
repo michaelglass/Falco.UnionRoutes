@@ -213,13 +213,11 @@ module Api =
         extractFromDll (Path.GetFullPath dllPath)
 
     let extractFromTag (tag: string) : ApiSignature list =
-        // Use a temp directory to checkout the tag without affecting working copy
+        // Use a jj workspace to checkout the tag without affecting working copy
         let tempDir = Path.Combine(Path.GetTempPath(), sprintf "falco-api-check-%s" (Guid.NewGuid().ToString("N").[..7]))
 
         try
-            // Clone the repo at the specific tag into temp dir (use file:// for proper --depth support)
-            let repoPath = Directory.GetCurrentDirectory()
-            Shell.runOrFail "git" (sprintf "clone --depth 1 --branch %s file://%s %s" tag repoPath tempDir) |> ignore
+            Shell.runOrFail "jj" (sprintf "workspace add %s -r %s" tempDir tag) |> ignore
 
             // Build in the temp directory
             Shell.runOrFail "dotnet" (sprintf "build %s/src/Falco.UnionRoutes/Falco.UnionRoutes.fsproj -c Release --verbosity quiet" tempDir) |> ignore
@@ -228,12 +226,18 @@ module Api =
             let api = extractFromDll tempDllPath
 
             // Cleanup
-            Directory.Delete(tempDir, true)
+            Shell.runSilent "jj" (sprintf "workspace forget %s" tempDir) |> ignore
+
+            if Directory.Exists(tempDir) then
+                Directory.Delete(tempDir, true)
+
             api
         with ex ->
-            // Cleanup on error
+            Shell.runSilent "jj" (sprintf "workspace forget %s" tempDir) |> ignore
+
             if Directory.Exists(tempDir) then
                 try Directory.Delete(tempDir, true) with _ -> ()
+
             printfn "Warning: Failed to extract API from tag %s: %s" tag ex.Message
             []
 
@@ -338,26 +342,25 @@ module Bump =
         | _, FirstRelease -> None // Can't promote if no previous release
 
 // ============================================================================
-// Version Control Operations (jj with git fallback for tags)
+// Version Control Operations (jj only, no colocated git)
 // ============================================================================
 
 module VCS =
     let hasUncommittedChanges () =
-        // jj status shows "The working copy has no changes." when clean
         match Shell.run "jj" "status" with
         | Success output -> not (output.Contains("The working copy has no changes"))
-        | Failure _ -> true // Assume changes if jj fails
+        | Failure _ -> true
 
     let tagExists tag =
-        // Tags are still git concepts, use git directly
-        match Shell.run "git" "tag -l" with
-        | Success output -> output.Split('\n') |> Array.contains tag
+        match Shell.run "jj" (sprintf "tag list %s" tag) with
+        | Success output -> output.Contains(tag)
         | Failure _ -> false
 
     let getLatestTag () =
-        match Shell.run "git" "tag -l v*" with
+        match Shell.run "jj" "tag list v*" with
         | Success output when output <> "" ->
             output.Split('\n')
+            |> Array.map (fun line -> line.Split(':').[0].Trim())
             |> Array.filter (fun t -> t.StartsWith("v"))
             |> Array.sortByDescending (fun t -> Version.sortKey (Version.parse t))
             |> Array.tryHead
@@ -372,22 +375,14 @@ module VCS =
         let versionStr = Version.format version
         let tag = Version.toTag version
 
-        // Commit the version file change
         Shell.runOrFail "jj" (sprintf "commit -m \"Release %s\"" versionStr) |> ignore
-
-        // Move main bookmark to the new commit (now @-)
         Shell.runOrFail "jj" "bookmark set main -r @-" |> ignore
-
-        // Create git tag on the new commit
-        Shell.runOrFail "git" (sprintf "tag -a %s -m \"Release %s\"" tag versionStr)
-        |> ignore
+        Shell.runOrFail "jj" (sprintf "tag set %s -r @-" tag) |> ignore
 
         tag
 
     let push tag =
-        // Push using jj, then push the tag via git
-        Shell.runOrFail "jj" "git push" |> ignore
-        Shell.runOrFail "git" (sprintf "push origin %s" tag) |> ignore
+        Shell.runOrFail "jj" "git push --all" |> ignore
 
 // ============================================================================
 // NuGet Operations
@@ -616,7 +611,7 @@ let release (cmd: ReleaseCommand) (mode: PublishMode) : ReleaseOutcome =
                         VCS.push tag
                         printfn "\nPushed! %s/actions" repoUrl
                     else
-                        printfn "\nTo push: git push origin HEAD && git push origin %s" tag
+                        printfn "\nTo push: jj git push --all"
 
                 Released tag
 
