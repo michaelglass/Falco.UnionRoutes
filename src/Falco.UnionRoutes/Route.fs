@@ -1571,3 +1571,213 @@ module Route =
                  | Parameter -> 1),
              path))
         |> List.map (fun (_, _, endpoint) -> endpoint)
+
+    // =========================================================================
+    // Public API - URL Matching
+    // =========================================================================
+
+    /// <summary>Error details when a URL fails to match any route.</summary>
+    type MatchError =
+        /// <summary>No route pattern matched the given method and URL.</summary>
+        | NoMatchingRoute
+        /// <summary>A route pattern matched, but a parameter value was invalid for its expected type.</summary>
+        | ParameterError of routePath: string * paramName: string * value: string * expectedType: string
+
+    /// <summary>A compiled entry used for URL matching.</summary>
+    [<NoComparison; NoEquality>]
+    type internal MatchEntry<'TRoute> =
+        { Route: 'TRoute
+          Method: HttpMethod
+          Path: string
+          Segments: string list
+          ParamFields: (string * Type) list }
+
+    /// <summary>Unwrap a single-case DU wrapper type to its inner primitive type.</summary>
+    let private unwrapFieldType (fieldType: Type) : Type =
+        if isSingleCaseWrapper fieldType then
+            FSharpType.GetUnionCases(fieldType).[0].GetFields().[0].PropertyType
+        else
+            fieldType
+
+    /// <summary>Friendly display name for a primitive type in error messages.</summary>
+    let private typeDisplayName (t: Type) : string =
+        if t = typeof<Guid> then "Guid"
+        elif t = typeof<int> then "int"
+        elif t = typeof<int64> then "int64"
+        elif t = typeof<bool> then "bool"
+        else t.Name
+
+    /// <summary>Try to parse a URL segment value into the expected type, returning the parsed value.</summary>
+    let private tryParseSegment
+        (paramName: string)
+        (value: string)
+        (expectedType: Type)
+        (routePath: string)
+        : Result<obj, MatchError> =
+        match tryParsePrimitive expectedType value paramName RouteParam with
+        | Some(Ok v) -> Ok v
+        | Some(Error _) -> Error(ParameterError(routePath, paramName, value, typeDisplayName expectedType))
+        | None -> Ok(box value)
+
+    /// <summary>Result of attempting to match URL segments against a route pattern.</summary>
+    [<NoComparison; NoEquality>]
+    type private SegmentMatchResult =
+        | SegmentsMatched of parsedValues: obj list
+        | LiteralMismatch
+        | ParseFailed of MatchError
+
+    /// <summary>Try to match URL segments against a route entry's pattern segments.</summary>
+    let private tryMatchSegments
+        (patternSegments: string list)
+        (urlSegments: string list)
+        (paramFields: (string * Type) list)
+        (routePath: string)
+        : SegmentMatchResult =
+        let rec check (patterns: string list) actuals fields acc =
+            match patterns, actuals with
+            | [], [] -> SegmentsMatched(List.rev acc)
+            | p :: ps, a :: as' when p.Contains("{") ->
+                match fields with
+                | (pName, pType) :: restFields ->
+                    match tryParseSegment pName a pType routePath with
+                    | Ok v -> check ps as' restFields (v :: acc)
+                    | Error e -> ParseFailed e
+                | [] -> ParseFailed(ParameterError(routePath, p, a, "unknown (internal error: no matching paramField)"))
+            | p :: ps, a :: as' ->
+                if String.Equals(p, a, StringComparison.OrdinalIgnoreCase) then
+                    check ps as' fields acc
+                else
+                    LiteralMismatch
+            | _ -> LiteralMismatch
+
+        check patternSegments urlSegments paramFields []
+
+    /// <summary>Reconstruct a route value with actual parsed parameter values from the URL.</summary>
+    let private reconstructRoute (templateRoute: obj) (parsedValues: obj list) : obj =
+        let rec rebuild (value: obj) (remaining: obj list) : obj * obj list =
+            let valueType = value.GetType()
+            let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+            let fields = case.GetFields()
+
+            let rest, reversedArgs =
+                [ 0 .. fields.Length - 1 ]
+                |> List.fold
+                    (fun (rem, args) i ->
+                        let f = fields.[i]
+
+                        if isNestedRouteUnion f.PropertyType then
+                            let rebuilt, rest = rebuild fieldValues.[i] rem
+                            (rest, rebuilt :: args)
+                        elif not (isNonRouteField f) then
+                            match rem with
+                            | hd :: tl ->
+                                let fieldVal =
+                                    if isSingleCaseWrapper f.PropertyType then
+                                        let wrapperCase = FSharpType.GetUnionCases(f.PropertyType).[0]
+                                        FSharpValue.MakeUnion(wrapperCase, [| hd |])
+                                    else
+                                        hd
+
+                                (tl, fieldVal :: args)
+                            | [] -> (rem, fieldValues.[i] :: args)
+                        else
+                            (rem, fieldValues.[i] :: args))
+                    (remaining, [])
+
+            let newArgs = reversedArgs |> List.rev |> Array.ofList
+            (FSharpValue.MakeUnion(case, newArgs), rest)
+
+        fst (rebuild templateRoute parsedValues)
+
+    /// <summary>
+    /// A pre-compiled URL matcher that efficiently matches URL strings against route patterns.
+    /// Create one with <see cref="M:Falco.UnionRoutes.Route.createMatcher``1"/> and reuse it for multiple matches.
+    /// </summary>
+    /// <typeparam name="TRoute">The route union type.</typeparam>
+    type RouteMatcher<'TRoute> internal (entries: MatchEntry<'TRoute> list) =
+
+        /// <summary>
+        /// Match a URL against the route patterns. Returns the matched route value with actual
+        /// parameter values parsed from the URL (e.g., the real Guid, not a default).
+        /// </summary>
+        /// <param name="method">The HTTP method of the request.</param>
+        /// <param name="url">The URL path to match (e.g., "/posts/550e8400-e29b-41d4-a716-446655440000"). Query strings are stripped.</param>
+        /// <returns>Ok with the matched route value containing actual URL parameter values, or Error with details about why matching failed.</returns>
+        member _.Match(method: HttpMethod, url: string) : Result<'TRoute, MatchError> =
+            let urlPath =
+                let qIdx = url.IndexOf('?')
+                if qIdx >= 0 then url.Substring(0, qIdx) else url
+
+            let urlSegments =
+                urlPath.Split('/', StringSplitOptions.RemoveEmptyEntries) |> Array.toList
+
+            let rec findMatch (remaining: MatchEntry<'TRoute> list) (bestError: MatchError option) =
+                match remaining with
+                | [] ->
+                    match bestError with
+                    | Some e -> Error e
+                    | None -> Error NoMatchingRoute
+                | entry :: rest ->
+                    if entry.Method <> method && entry.Method <> HttpMethod.Any then
+                        findMatch rest bestError
+                    elif entry.Segments.Length <> urlSegments.Length then
+                        findMatch rest bestError
+                    else
+                        match tryMatchSegments entry.Segments urlSegments entry.ParamFields entry.Path with
+                        | SegmentsMatched parsedValues ->
+                            let route = reconstructRoute (box entry.Route) parsedValues :?> 'TRoute
+                            Ok route
+                        | ParseFailed e -> findMatch rest (Some e)
+                        | LiteralMismatch -> findMatch rest bestError
+
+            findMatch entries None
+
+    /// <summary>
+    /// Create a pre-compiled URL matcher for a route type.
+    /// The matcher enumerates all route cases and their patterns once, then matches URLs efficiently.
+    /// </summary>
+    /// <typeparam name="TRoute">The route union type.</typeparam>
+    /// <returns>A <see cref="T:Falco.UnionRoutes.Route.RouteMatcher`1"/> that can match URLs to route values.</returns>
+    /// <example>
+    /// <code>
+    /// let matcher = Route.createMatcher&lt;MyRoute&gt;()
+    /// match matcher.Match(HttpMethod.Get, "/posts/550e8400-e29b-41d4-a716-446655440000") with
+    /// | Ok route -> printfn "Matched: %A" route
+    /// | Error Route.NoMatchingRoute -> printfn "No match"
+    /// | Error (Route.ParameterError(path, name, value, expected)) ->
+    ///     printfn "Parameter '%s' value '%s' is not a valid %s (route: %s)" name value expected path
+    /// </code>
+    /// </example>
+    let createMatcher<'TRoute> () : RouteMatcher<'TRoute> =
+        let entries =
+            allRoutes<'TRoute> ()
+            |> List.map (fun route ->
+                let routeInfo = info route
+
+                let paramFields =
+                    collectPathFields (box route)
+                    |> List.map (fun (name, t) -> (name, unwrapFieldType t))
+
+                let segments =
+                    routeInfo.Path.Split('/', StringSplitOptions.RemoveEmptyEntries) |> Array.toList
+
+                { Route = route
+                  Method = routeInfo.Method
+                  Path = routeInfo.Path
+                  Segments = segments
+                  ParamFields = paramFields })
+
+        RouteMatcher(entries)
+
+    /// <summary>
+    /// Match a URL against all route patterns for a route type.
+    /// This creates a new matcher on each call. For matching many URLs, prefer
+    /// <see cref="M:Falco.UnionRoutes.Route.createMatcher``1"/> which pre-compiles patterns and can be reused.
+    /// </summary>
+    /// <typeparam name="TRoute">The route union type.</typeparam>
+    /// <param name="method">The HTTP method.</param>
+    /// <param name="url">The URL path to match.</param>
+    /// <returns>Ok with the matched route value, or Error with match failure details.</returns>
+    let matchUrl<'TRoute> (method: HttpMethod) (url: string) : Result<'TRoute, MatchError> =
+        let matcher = createMatcher<'TRoute> ()
+        matcher.Match(method, url)
