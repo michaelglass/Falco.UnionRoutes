@@ -295,6 +295,8 @@ Route.respond returns value          // Type-safe JSON response via Returns<'T>
 Route.link route                     // Type-safe URL: "/posts/abc-123"
 Route.info route                     // RouteInfo with Method and Path
 Route.allRoutes<Route>()             // Enumerate all routes
+Route.createMatcher<Route>()         // Pre-compiled URL matcher (reusable)
+Route.matchUrl<Route> method url     // One-shot URL matching
 Route.validateStructure<Route>()     // Validate path structure only
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
 Route.validate<Route, Error> preconditions               // Full validation (for tests)
@@ -315,6 +317,35 @@ Extractor.constrainedParser<Slug> [| Alpha |] parseFn        // String parser + 
 Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pre-parsed input)
 ```
 <!-- sync:keyfunctions:end -->
+
+<!-- sync:urlmatching:start -->
+### URL Matching
+
+Match URL strings back into strongly-typed route values — the reverse of `Route.link`. Useful for testing, request routing outside Falco, deep-link handling, or URL validation.
+
+```fsharp
+// Create a pre-compiled matcher (recommended for matching many URLs)
+let matcher = Route.createMatcher<Route>()
+
+// Match returns the actual route value with parsed parameters
+match matcher.Match(HttpMethod.Get, "/posts/550e8400-e29b-41d4-a716-446655440000") with
+| Ok (Posts (Detail id)) -> printfn "Post detail: %O" id  // id is the actual Guid
+| Ok route -> printfn "Matched: %A" route
+| Error Route.NoMatchingRoute -> printfn "No route matched"
+| Error (Route.ParameterError(path, name, value, expected)) ->
+    printfn "Parameter '%s' value '%s' is not a valid %s" name value expected
+
+// One-shot convenience (creates a new matcher each call)
+let result = Route.matchUrl<Route> HttpMethod.Get "/health"
+```
+
+Features:
+- Parameters are parsed to their actual types (Guid, int, etc.)
+- Single-case DU wrappers (e.g., `PostId of Guid`) are reconstructed
+- Case-insensitive path matching
+- Query strings are stripped before matching
+- Nested route hierarchies are fully supported
+<!-- sync:urlmatching:end -->
 
 <!-- sync:openapi:start -->
 ### OpenAPI Spec Generation

@@ -26,8 +26,9 @@ let overrides =
     Map.ofList
         [ // Route.fs: Compiler-generated closure classes for lambdas have uncovered lines
           // plus defensive failwith paths for unsupported types that are never triggered.
-          // Branch: enum exhaustiveness in toHttpMethod, pattern match guards, for-loop branches
-          "Route.fs", (97.0, 84.0) // (minLine, minBranch)
+          // Branch: enum exhaustiveness in toHttpMethod, pattern match guards, for-loop branches.
+          // The URL matcher's tryParseSegment elif chain generates extra IL marked uncovered.
+          "Route.fs", (96.0, 86.0) // (minLine, minBranch)
           // Spec.fs: F# generates extra branches for nested match on option+DU
           "Spec.fs", (100.0, 86.0) ]
 
