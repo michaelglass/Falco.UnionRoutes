@@ -1,0 +1,22 @@
+name: Deploy Docs
+
+on:
+  push:
+    tags:
+      - 'v*'
+      - '!*alpha*'
+      - '!*beta*'
+      - '!*rc*'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    uses: michaelglass/MichaelsWackyFsPackageTools/.github/workflows/michaels-wacky-docs.yml@main

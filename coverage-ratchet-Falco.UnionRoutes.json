@@ -1,0 +1,14 @@
+{
+  "overrides": {
+    "Route.fs": {
+      "line": 97.28199320498301,
+      "branch": 86.43410852713178,
+      "reason": "Compiler-generated closure classes, defensive failwith paths, enum exhaustiveness, pattern match guards, for-loop branches, tryParseSegment elif chain"
+    },
+    "Spec.fs": {
+      "line": 100,
+      "branch": 86.36363636363636,
+      "reason": "F# generates extra branches for nested match on option\u002BDU"
+    }
+  }
+}

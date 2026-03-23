@@ -55,22 +55,22 @@ run = "dotnet fsharplint lint Falco.UnionRoutes.sln"
 depends = ["build", "tool-restore"]
 
 [tasks.coverage-check]
-description = "Check per-file coverage meets minimum threshold (50%)"
-run = "dotnet fsi scripts/check-coverage.fsx"
+description = "Check per-file coverage meets minimum threshold"
+run = "(cd coverage && dotnet tool run coverageratchet check ../coverage-ratchet-Falco.UnionRoutes.json)"
 depends = ["test"]
 
-[tasks.check-api]
-description = "Check API changes since last release"
-run = "dotnet fsi scripts/check-api.fsx"
-depends = ["build"]
+[tasks.coverage-ratchet]
+description = "Ratchet coverage thresholds to current values"
+run = "(cd coverage && dotnet tool run coverageratchet ratchet ../coverage-ratchet-Falco.UnionRoutes.json)"
+depends = ["test"]
 
 [tasks.sync-docs]
 description = "Sync README.md content to docs/index.md"
-run = "dotnet fsi scripts/sync-docs.fsx"
+run = "dotnet tool run syncdocs sync"
 
 [tasks.sync-docs-check]
 description = "Check if docs/index.md is in sync with README.md"
-run = "dotnet fsi scripts/sync-docs.fsx --check"
+run = "dotnet tool run syncdocs check"
 
 [tasks.check]
 description = "Run all checks with auto-fix (format, sync-docs, then verify)"
@@ -94,3 +94,13 @@ depends = ["build", "tool-restore"]
 description = "Watch and serve documentation locally"
 run = "dotnet fsdocs watch"
 depends = ["build", "tool-restore"]
+
+[tasks.release]
+description = "Create a release with semantic version tagging"
+run = "dotnet tool run fssemantictagger release"
+depends = ["ci"]
+
+[tasks.release-alpha]
+description = "Create an alpha pre-release"
+run = "dotnet tool run fssemantictagger alpha"
+depends = ["build"]
