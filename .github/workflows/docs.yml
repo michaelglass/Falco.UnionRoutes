@@ -4,9 +4,6 @@ on:
   push:
     tags:
       - 'v*'
-      - '!*alpha*'
-      - '!*beta*'
-      - '!*rc*'
 
 permissions:
   contents: read
@@ -19,4 +16,5 @@ concurrency:
 
 jobs:
   docs:
+    if: "!contains(github.ref, '-alpha') && !contains(github.ref, '-beta') && !contains(github.ref, '-rc')"
     uses: michaelglass/MichaelsWackyFsPackageTools/.github/workflows/michaels-wacky-docs.yml@main
