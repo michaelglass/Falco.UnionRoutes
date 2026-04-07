@@ -17,5 +17,3 @@ jobs:
     with:
       solution: Falco.UnionRoutes.sln
       fantomas-paths: 'src/ tests/ examples/ tools/'
-      has-examples: true
-      example-path: 'examples/ExampleApp'
