@@ -18,6 +18,9 @@ jobs:
     permissions:
       contents: write
 
+  # NuGet Trusted Publishing requires nuget/login to run in the calling repo's
+  # workflow, not a reusable workflow from another repo. The OIDC token's
+  # job_workflow_ref must match the repo's own workflow file.
   publish:
     needs: release
     runs-on: ubuntu-latest
