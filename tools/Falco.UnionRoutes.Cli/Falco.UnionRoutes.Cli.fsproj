@@ -5,6 +5,9 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>falco-routes</ToolCommandName>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Disable SourceLink when no .git directory exists (jj without colocated git) -->
+    <EnableSourceLink Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceLink>
+    <EnableSourceControlManagerQueries Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceControlManagerQueries>
   </PropertyGroup>
 
   <ItemGroup>

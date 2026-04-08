@@ -3,6 +3,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Disable SourceLink when no .git directory exists (jj without colocated git) -->
+    <EnableSourceLink Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceLink>
+    <EnableSourceControlManagerQueries Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceControlManagerQueries>
     <WarningLevel>5</WarningLevel>
 
     <WarnOn>
