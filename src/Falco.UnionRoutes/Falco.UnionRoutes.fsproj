@@ -51,5 +51,6 @@
 
   <ItemGroup>
     <PackageReference Include="Falco" Version="5.2.0" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.102" PrivateAssets="All" />
   </ItemGroup>
 </Project>
