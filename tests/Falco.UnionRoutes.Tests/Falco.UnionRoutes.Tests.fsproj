@@ -4,6 +4,9 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Disable SourceLink when no .git directory exists (jj without colocated git) -->
+    <EnableSourceLink Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceLink>
+    <EnableSourceControlManagerQueries Condition="!Exists('$(MSBuildThisFileDirectory)../../.git')">false</EnableSourceControlManagerQueries>
     <!-- FS0988: existing suppression; FS3511: state machine not statically compilable; NETSDK1188: harmless locale warnings from Microsoft.Testing.Platform -->
     <NoWarn>$(NoWarn);FS0988;3511;NETSDK1188</NoWarn>
     <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
