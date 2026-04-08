@@ -72,13 +72,18 @@ run = "dotnet tool run syncdocs sync"
 description = "Check if docs/index.md is in sync with README.md"
 run = "dotnet tool run syncdocs check"
 
+[tasks.lint-project]
+description = "Run FsProjLint"
+run = "dotnet tool run fsprojlint"
+depends = ["tool-restore"]
+
 [tasks.check]
 description = "Run all checks with auto-fix (format, sync-docs, then verify)"
-depends = ["format", "sync-docs", "lint", "coverage-check", "docs", "example-build"]
+depends = ["format", "sync-docs", "lint", "lint-project", "coverage-check", "docs", "example-build"]
 
 [tasks.ci]
 description = "Run all CI checks (no auto-fix)"
-depends = ["format-check", "lint", "coverage-check", "sync-docs-check", "docs", "example-build"]
+depends = ["format-check", "lint", "lint-project", "coverage-check", "sync-docs-check", "docs", "example-build"]
 
 [tasks.pack]
 description = "Create NuGet package"
