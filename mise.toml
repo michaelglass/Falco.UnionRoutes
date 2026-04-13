@@ -64,6 +64,16 @@ description = "Ratchet coverage thresholds to current values"
 run = "(cd coverage && dotnet tool run coverageratchet ratchet ../coverage-ratchet-Falco.UnionRoutes.json)"
 depends = ["test"]
 
+[tasks.coverage-loosen]
+description = "Loosen coverage thresholds to current values"
+run = "(cd coverage && dotnet tool run coverageratchet loosen ../coverage-ratchet-Falco.UnionRoutes.json)"
+depends = ["test"]
+
+[tasks.loosen-from-ci]
+description = "Merge coverage thresholds from CI artifacts"
+run = "(cd coverage && dotnet tool run coverageratchet loosen-from-ci ../coverage-ratchet-Falco.UnionRoutes.json)"
+depends = ["test"]
+
 [tasks.sync-docs]
 description = "Sync README.md content to docs/index.md"
 run = "dotnet tool run syncdocs sync"
@@ -79,7 +89,7 @@ depends = ["tool-restore"]
 
 [tasks.check]
 description = "Run all checks with auto-fix (format, sync-docs, then verify)"
-depends = ["format", "sync-docs", "lint", "lint-project", "coverage-check", "docs", "example-build"]
+depends = ["format", "sync-docs", "lint", "lint-project", "coverage-ratchet", "docs", "example-build"]
 
 [tasks.ci]
 description = "Run all CI checks (no auto-fix)"
