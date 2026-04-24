@@ -115,6 +115,11 @@ description = "Create a release with semantic version tagging"
 run = "dotnet tool run fssemantictagger release"
 depends = ["ci"]
 
+[tasks.release-dry-run]
+description = "Preview a release without mutating (no tag, no publish)"
+run = "dotnet tool run fssemantictagger release --dry-run"
+depends = ["build"]
+
 [tasks.release-alpha]
 description = "Create an alpha pre-release"
 run = "dotnet tool run fssemantictagger alpha"
