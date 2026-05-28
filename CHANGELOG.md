@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.2 - 2026-05-28
+
 - Update external dependencies: `Microsoft.SourceLink.GitHub` 10.0.201 → 10.0.300, `Microsoft.Testing.Extensions.CodeCoverage` 18.6.2 → 18.7.0
 - fix: disable SourceLink when no `.git` directory exists (jj without colocated git)
 - Replace bespoke release/coverage/API/doc scripts with shared NuGet tools and reusable workflows
