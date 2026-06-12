@@ -1,6 +1,7 @@
 namespace Falco.UnionRoutes
 
 open System
+open System.Collections.Concurrent
 open System.Collections.Generic
 open System.Text.Json
 open System.Text.Json.Serialization
@@ -146,6 +147,29 @@ module Route =
     // Internal helpers (from RouteReflection)
     // =========================================================================
 
+    // -------------------------------------------------------------------------
+    // Reflection metadata caches.
+    //
+    // Union-case reflection (FSharpType.GetUnionCases) and the type-classification
+    // predicates derived from it are pure functions of a Type. The hydration and
+    // matching paths invoke them per request, so the results are memoized in
+    // module-level concurrent dictionaries keyed by Type. Behavior is unchanged:
+    // these caches only avoid recomputing values that are constant for a given type.
+    // -------------------------------------------------------------------------
+
+    let private unionCasesCache = ConcurrentDictionary<Type, UnionCaseInfo[]>()
+
+    /// Cached FSharpType.GetUnionCases. Union-case metadata is constant per type.
+    let private getUnionCasesCached (t: Type) : UnionCaseInfo[] =
+        unionCasesCache.GetOrAdd(t, fun ty -> FSharpType.GetUnionCases(ty))
+
+    /// Memoize a Type -> bool predicate in a concurrent dictionary.
+    let private cachedTypePredicate (cache: ConcurrentDictionary<Type, bool>) (compute: Type -> bool) (t: Type) : bool =
+        cache.GetOrAdd(t, compute)
+
+    let private singleCaseWrapperCache = ConcurrentDictionary<Type, bool>()
+    let private nestedRouteUnionCache = ConcurrentDictionary<Type, bool>()
+
     // Precompiled regex for better performance during route enumeration
     let private kebabCaseRegex =
         Regex(@"([a-z])([A-Z])|([A-Z]+)([A-Z][a-z])", RegexOptions.Compiled)
@@ -227,25 +251,33 @@ module Route =
 
     /// Check if a type is a single-case DU wrapper for a primitive (e.g., PostId of Guid)
     let internal isSingleCaseWrapper (t: Type) =
-        FSharpType.IsUnion(t)
-        && let cases = FSharpType.GetUnionCases(t) in
+        cachedTypePredicate
+            singleCaseWrapperCache
+            (fun ty ->
+                FSharpType.IsUnion(ty)
+                && let cases = getUnionCasesCached ty in
 
-           cases.Length = 1
-           && cases.[0].GetFields().Length = 1
-           && supportedPrimitives |> List.contains (cases.[0].GetFields().[0].PropertyType)
+                   cases.Length = 1
+                   && cases.[0].GetFields().Length = 1
+                   && supportedPrimitives |> List.contains (cases.[0].GetFields().[0].PropertyType))
+            t
 
     /// Check if a type is a nested route union (for hierarchy traversal)
     let internal isNestedRouteUnion (t: Type) =
-        FSharpType.IsUnion(t)
-        && t <> typeof<string>
-        && not (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
-        && not (isPreconditionType t)
-        && not (isOptionalPreconditionType t)
-        && not (isQueryType t)
-        && not (isOptionalQueryType t)
-        && not (isReturnsType t)
-        && not (isBodyType t)
-        && not (isSingleCaseWrapper t)
+        cachedTypePredicate
+            nestedRouteUnionCache
+            (fun ty ->
+                FSharpType.IsUnion(ty)
+                && ty <> typeof<string>
+                && not (ty.IsGenericType && ty.GetGenericTypeDefinition() = typedefof<option<_>>)
+                && not (isPreconditionType ty)
+                && not (isOptionalPreconditionType ty)
+                && not (isQueryType ty)
+                && not (isOptionalQueryType ty)
+                && not (isReturnsType ty)
+                && not (isBodyType ty)
+                && not (isSingleCaseWrapper ty))
+            t
 
     /// Check if a field should be excluded from route path
     let internal isNonRouteField (f: Reflection.PropertyInfo) =
@@ -308,7 +340,7 @@ module Route =
         elif fieldType = typeof<bool> then
             ":bool"
         elif isSingleCaseWrapper fieldType then
-            let innerType = FSharpType.GetUnionCases(fieldType).[0].GetFields().[0].PropertyType
+            let innerType = (getUnionCasesCached fieldType).[0].GetFields().[0].PropertyType
             implicitConstraintForType innerType
         else
             ""
@@ -619,10 +651,10 @@ module Route =
         elif isBodyType t then
             let innerType = t.GetGenericArguments().[0]
             let innerDefault = getDefaultValue innerType
-            let case = FSharpType.GetUnionCases(t).[0]
+            let case = (getUnionCasesCached t).[0]
             FSharpValue.MakeUnion(case, [| innerDefault |])
         elif isSingleCaseWrapper t then
-            let case = FSharpType.GetUnionCases(t).[0]
+            let case = (getUnionCasesCached t).[0]
             let innerDefault = getDefaultValue (case.GetFields().[0].PropertyType)
             FSharpValue.MakeUnion(case, [| innerDefault |])
         elif t.IsValueType then
@@ -633,7 +665,7 @@ module Route =
     /// Enumerate all values of a union type
     // fsharplint:disable-next-line FL0085
     let rec private enumerateUnionValues (unionType: Type) : obj list =
-        FSharpType.GetUnionCases(unionType)
+        getUnionCasesCached unionType
         |> Array.toList
         |> List.collect (fun case ->
             let fields = case.GetFields()
@@ -786,7 +818,7 @@ module Route =
               yield! validatePathParamsMatchFields case path ]
 
     let rec private validateUnionType (unionType: Type) : string list =
-        FSharpType.GetUnionCases(unionType)
+        getUnionCasesCached unionType
         |> Array.toList
         |> List.collect (fun case ->
             let caseErrors = validateCase case
@@ -966,7 +998,7 @@ module Route =
     /// Detects if a type is a single-case DU wrapping another type.
     let private tryGetWrapperInfo (t: Type) : (Type * (obj -> obj)) option =
         if FSharpType.IsUnion t then
-            let cases = FSharpType.GetUnionCases t
+            let cases = getUnionCasesCached t
 
             if cases.Length = 1 then
                 let case = cases.[0]
@@ -1039,14 +1071,14 @@ module Route =
 
     let private boxSome (innerType: Type) (value: obj) : obj =
         let someCase =
-            FSharpType.GetUnionCases(typedefof<option<_>>.MakeGenericType(innerType))
+            getUnionCasesCached (typedefof<option<_>>.MakeGenericType(innerType))
             |> Array.find (fun c -> c.Name = "Some")
 
         FSharpValue.MakeUnion(someCase, [| value |])
 
     let private boxNone (innerType: Type) : obj =
         let noneCase =
-            FSharpType.GetUnionCases(typedefof<option<_>>.MakeGenericType(innerType))
+            getUnionCasesCached (typedefof<option<_>>.MakeGenericType(innerType))
             |> Array.find (fun c -> c.Name = "None")
 
         FSharpValue.MakeUnion(noneCase, [||])
@@ -1147,7 +1179,7 @@ module Route =
             | Some innerType ->
                 match tryExtractPrimitive QueryString fieldName innerType ctx with
                 | Some(Ok v) ->
-                    let queryCase = FSharpType.GetUnionCases(fieldType).[0]
+                    let queryCase = (getUnionCasesCached fieldType).[0]
                     Ok(FSharpValue.MakeUnion(queryCase, [| v |]))
                 | Some(Error msg) -> Error msg
                 | None -> Error $"Missing query parameter: {fieldName}"
@@ -1188,7 +1220,7 @@ module Route =
             | Some queryInnerType ->
                 match tryExtractPrimitive QueryString fieldName queryInnerType ctx with
                 | Some(Ok v) ->
-                    let queryCase = FSharpType.GetUnionCases(innerType).[0]
+                    let queryCase = (getUnionCasesCached innerType).[0]
                     let queryVal = FSharpValue.MakeUnion(queryCase, [| v |])
                     Ok(boxSome innerType queryVal)
                 | Some(Error msg) -> Error msg
@@ -1204,7 +1236,7 @@ module Route =
     let private createSkippedOptPreValue (optPreType: Type) : obj =
         let innerType = optPreType.GetGenericArguments().[0]
         let defaultValue = getDefaultValue innerType
-        let optPreCase = FSharpType.GetUnionCases(optPreType).[0]
+        let optPreCase = (getUnionCasesCached optPreType).[0]
         FSharpValue.MakeUnion(optPreCase, [| defaultValue |])
 
     [<NoComparison; NoEquality>]
@@ -1213,7 +1245,7 @@ module Route =
         | FromExtraction of Result<obj, string>
 
     let rec private collectPreconditionTypes (unionType: Type) : Type list =
-        FSharpType.GetUnionCases(unionType)
+        getUnionCasesCached unionType
         |> Array.toList
         |> List.collect (fun case ->
             let fields = case.GetFields()
@@ -1373,7 +1405,7 @@ module Route =
                                             cancellationToken = ctx.RequestAborted
                                         )
 
-                                    let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                    let case = (getUnionCasesCached field.PropertyType).[0]
                                     return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
                                 with ex ->
                                     return FromExtraction(Error $"Failed to read JSON body: {ex.Message}")
@@ -1393,7 +1425,7 @@ module Route =
 
                                     let json = JsonSerializer.Serialize(jsonDict)
                                     let body = JsonSerializer.Deserialize(json, innerType, options)
-                                    let case = FSharpType.GetUnionCases(field.PropertyType).[0]
+                                    let case = (getUnionCasesCached field.PropertyType).[0]
                                     return FromExtraction(Ok(FSharpValue.MakeUnion(case, [| body |])))
                                 with ex ->
                                     return FromExtraction(Error $"Failed to read form body: {ex.Message}")
@@ -1600,7 +1632,7 @@ module Route =
     /// <summary>Unwrap a single-case DU wrapper type to its inner primitive type.</summary>
     let private unwrapFieldType (fieldType: Type) : Type =
         if isSingleCaseWrapper fieldType then
-            FSharpType.GetUnionCases(fieldType).[0].GetFields().[0].PropertyType
+            (getUnionCasesCached fieldType).[0].GetFields().[0].PropertyType
         else
             fieldType
 
@@ -1682,7 +1714,7 @@ module Route =
                             | hd :: tl ->
                                 let fieldVal =
                                     if isSingleCaseWrapper f.PropertyType then
-                                        let wrapperCase = FSharpType.GetUnionCases(f.PropertyType).[0]
+                                        let wrapperCase = (getUnionCasesCached f.PropertyType).[0]
                                         FSharpValue.MakeUnion(wrapperCase, [| hd |])
                                     else
                                         hd
