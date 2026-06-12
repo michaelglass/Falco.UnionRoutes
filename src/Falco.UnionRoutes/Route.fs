@@ -540,9 +540,14 @@ module Route =
                         let valueStr =
                             match unwrapValue value with
                             | null -> ""
-                            | v -> v.ToString()
+                            // Percent-encode so values containing reserved characters
+                            // ('/', '?', '#', ' ', etc.) survive the URL and round-trip
+                            // exactly through Route.matchUrl.
+                            | v -> Uri.EscapeDataString(v.ToString())
 
-                        Regex.Replace(seg, @"\{" + Regex.Escape(f.Name) + @"(:[^}]*)?\}", valueStr))
+                        // MatchEvaluator (rather than a replacement string) avoids '$'
+                        // substitution surprises in the encoded value.
+                        Regex.Replace(seg, @"\{" + Regex.Escape(f.Name) + @"(:[^}]*)?\}", (fun _ -> valueStr)))
                     segmentPattern
 
         match nestedUnionFieldIndex with
@@ -1639,7 +1644,11 @@ module Route =
             | p :: ps, a :: as' when p.Contains("{") ->
                 match fields with
                 | (pName, pType) :: restFields ->
-                    match tryParseSegment pName a pType routePath with
+                    // Percent-decode parameter segments so values encoded by Route.link
+                    // (spaces, '/', '?', etc.) round-trip back to their original value.
+                    let decoded = Uri.UnescapeDataString(a: string)
+
+                    match tryParseSegment pName decoded pType routePath with
                     | Ok v -> check ps as' restFields (v :: acc)
                     | Error e -> ParseFailed e
                 | [] -> ParseFailed(ParameterError(routePath, p, a, "unknown (internal error: no matching paramField)"))

@@ -18,6 +18,7 @@
     <Compile Include="ExtractionTests.fs" />
     <Compile Include="RouteHydrationTests.fs" />
     <Compile Include="MatcherTests.fs" />
+    <Compile Include="RoundTripTests.fs" />
     <Compile Include="SpecTests.fs" />
   </ItemGroup>
 
