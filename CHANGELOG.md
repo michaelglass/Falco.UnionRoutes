@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.3 - 2026-06-12
+
 - feat: make `Route.validateUniqueness` public so it can be called as a standalone uniqueness/ambiguity check
 - fix: percent-encode values substituted into `Route.link` URLs (and decode them on match) so reserved characters round-trip exactly through `Route.matchUrl`
 - fix: `FormBody` maps repeated form fields (`tags=a&tags=b`) to JSON arrays instead of comma-joined strings, so list/array fields hydrate correctly
