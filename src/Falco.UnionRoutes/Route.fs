@@ -655,7 +655,18 @@ module Route =
     /// <summary>Generates a concrete URL path from a route value by substituting actual field values.</summary>
     /// <typeparam name="T">The route union type.</typeparam>
     /// <param name="route">The route value with actual parameter values.</param>
-    /// <returns>A URL path with parameters substituted.</returns>
+    /// <returns>A URL path with path parameters substituted (path segments only — no query string).</returns>
+    /// <remarks>
+    /// <para>Only path-segment fields are included. Fields backed by other sources are intentionally
+    /// omitted from the generated URL: <c>QueryParam&lt;'T&gt;</c> (and its <c>option</c>),
+    /// <c>JsonBody&lt;'T&gt;</c>, <c>FormBody&lt;'T&gt;</c>, <c>PreCondition&lt;'T&gt;</c>,
+    /// <c>OverridablePreCondition&lt;'T&gt;</c>, and <c>Returns&lt;'T&gt;</c>.</para>
+    /// <para>In particular, query-string parameters are NOT appended — <c>Route.link</c> produces the path
+    /// only. Append any query string yourself if you need one, e.g.
+    /// <c>Route.link route + "?page=2"</c>.</para>
+    /// <para>Substituted path values are percent-encoded so they round-trip exactly through
+    /// <see cref="M:Falco.UnionRoutes.Route.matchUrl``1"/>.</para>
+    /// </remarks>
     /// <example>
     /// <code>
     /// let postId = PostId (Guid.Parse "abc-123")

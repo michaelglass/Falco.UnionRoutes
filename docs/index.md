@@ -320,6 +320,16 @@ Extractor.typedParser<bool, Toggle> parseFn                  // Typed parser (pr
 <!-- sync:keyfunctions:end -->
 
 <!-- sync:urlmatching -->
+### Generating Links
+
+`Route.link route` returns the **path only** — it does not append a query string. Query-string fields (`QueryParam<'T>` and its `option`), body fields (`JsonBody<'T>`, `FormBody<'T>`), preconditions, and `Returns<'T>` are all excluded from the generated URL; only path-segment fields are substituted. A route's `QueryParam` value is therefore not reflected in its link. If you need a query string, append it yourself:
+
+```fsharp
+Route.link route + "?page=2"   // add the query string manually
+```
+
+Substituted path values are percent-encoded, so a link round-trips exactly through `Route.matchUrl`.
+
 ### URL Matching
 
 Match URL strings back into strongly-typed route values — the reverse of `Route.link`. Useful for testing, request routing outside Falco, deep-link handling, or URL validation.
