@@ -1029,8 +1029,20 @@ module Route =
                           elif not (isMoreSpecific parsedA parsedB) && not (isMoreSpecific parsedB parsedA) then
                               $"Ambiguous routes: '{caseA}' ({methodA} {pathA}) and '{caseB}' ({methodA} {pathB}) overlap with no clear specificity winner" ])
 
-    /// Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.
-    let internal validateUniqueness<'Route> () : Result<unit, string list> =
+    /// <summary>Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.</summary>
+    /// <typeparam name="Route">The route union type to validate.</typeparam>
+    /// <returns><c>Ok ()</c> if every route is unique and unambiguous, otherwise <c>Error</c> with the list of
+    /// duplicate-route and ambiguous-route messages.</returns>
+    /// <remarks>This is the uniqueness portion of <see cref="M:Falco.UnionRoutes.Route.validate``2"/>; it is also
+    /// run automatically by <see cref="M:Falco.UnionRoutes.Route.endpoints``2"/> at startup.</remarks>
+    /// <example>
+    /// <code>
+    /// match Route.validateUniqueness&lt;Route&gt;() with
+    /// | Ok () -> printfn "Routes are unique"
+    /// | Error errors -> errors |> List.iter (printfn "Error: %s")
+    /// </code>
+    /// </example>
+    let validateUniqueness<'Route> () : Result<unit, string list> =
         let errors = validateCrossRouteUniqueness typeof<'Route>
 
         if errors.IsEmpty then Ok() else Error errors
