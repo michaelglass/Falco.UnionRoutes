@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- feat: make `Route.validateUniqueness` public so it can be called as a standalone uniqueness/ambiguity check
+- fix: percent-encode values substituted into `Route.link` URLs (and decode them on match) so reserved characters round-trip exactly through `Route.matchUrl`
+- fix: `FormBody` maps repeated form fields (`tags=a&tags=b`) to JSON arrays instead of comma-joined strings, so list/array fields hydrate correctly
+- fix: validate single-case DU wrappers of unsupported primitives (e.g. `Price of decimal`), emitting a clear error instead of silently misclassifying them as nested route unions
+- perf: cache union-case reflection metadata keyed by `Type` to avoid recomputing it on every request
+- docs: clarify that `SkipPrecondition` takes the inner type, not the `OverridablePreCondition<'T>` wrapper
+- docs: document that `Route.link` substitutes only path-segment fields and omits query params
+
 ## 0.3.2 - 2026-05-28
 
 - Update external dependencies: `Microsoft.SourceLink.GitHub` 10.0.201 → 10.0.300, `Microsoft.Testing.Extensions.CodeCoverage` 18.6.2 → 18.7.0
