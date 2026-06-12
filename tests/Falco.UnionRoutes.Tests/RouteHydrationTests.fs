@@ -1518,6 +1518,88 @@ let ``FormBody returns error for missing form`` () =
         test <@ Result.isError result @>
     }
 
+// -----------------------------------------------------------------------------
+// FormBody multi-value field handling (tags=a&tags=b -> string list)
+// -----------------------------------------------------------------------------
+
+type TagsInput = { Name: string; Tags: string list }
+
+type TagsFormRoute = SubmitTags of FormBody<TagsInput>
+
+let private createMockContextWithMultiValueForm (fields: (string * string list) list) =
+    let context = DefaultHttpContext()
+    let dict = Dictionary<string, StringValues>()
+
+    for (k, vs) in fields do
+        dict.[k] <- StringValues(List.toArray vs)
+
+    context.Request.ContentType <- "application/x-www-form-urlencoded"
+    context.Request.Form <- FormCollection(dict)
+    context :> HttpContext
+
+let private hydrateTagsForm () =
+    Route.extractor<TagsFormRoute, TestError> (userPreconditions ()) [] makeError combineErrors
+
+[<Fact>]
+let ``FormBody maps repeated field to a list`` () =
+    task {
+        let ctx =
+            createMockContextWithMultiValueForm [ ("Name", [ "post" ]); ("Tags", [ "a"; "b" ]) ]
+
+        let pipeline =
+            hydrateTagsForm () (TagsFormRoute.SubmitTags(FormBody { Name = ""; Tags = [] }))
+
+        let! result = pipeline ctx
+        test <@ result = Ok(TagsFormRoute.SubmitTags(FormBody { Name = "post"; Tags = [ "a"; "b" ] })) @>
+    }
+
+[<Fact>]
+let ``FormBody scalar field unchanged by multi-value handling`` () =
+    task {
+        // Single-value fields remain scalar strings so scalar targets keep working.
+        let ctx =
+            createMockContextWithFormBody [ ("Username", "admin"); ("Password", "secret") ]
+
+        let pipeline =
+            hydrateFormBody () (FormBodyRoute.Submit(FormBody { Username = ""; Password = "" }))
+
+        let! result = pipeline ctx
+
+        test
+            <@
+                result = Ok(
+                    FormBodyRoute.Submit(
+                        FormBody
+                            { Username = "admin"
+                              Password = "secret" }
+                    )
+                )
+            @>
+    }
+
+[<Fact>]
+let ``FormBody three repeated values map to a list`` () =
+    task {
+        let ctx =
+            createMockContextWithMultiValueForm [ ("Name", [ "post" ]); ("Tags", [ "x"; "y"; "z" ]) ]
+
+        let pipeline =
+            hydrateTagsForm () (TagsFormRoute.SubmitTags(FormBody { Name = ""; Tags = [] }))
+
+        let! result = pipeline ctx
+
+        test
+            <@
+                result = Ok(
+                    TagsFormRoute.SubmitTags(
+                        FormBody
+                            { Name = "post"
+                              Tags = [ "x"; "y"; "z" ] }
+                    )
+                )
+            @>
+    }
+
 // =============================================================================
 // Unsupported field type error tests
 // =============================================================================
