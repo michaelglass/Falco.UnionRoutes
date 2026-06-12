@@ -1417,7 +1417,14 @@ module Route =
 
                                     for kvp in form do
                                         let sv = kvp.Value
-                                        jsonDict.[kvp.Key] <- string sv
+                                        // A repeated form field (e.g. tags=a&tags=b) becomes a JSON
+                                        // array so it can hydrate a list/array target field. Single-value
+                                        // fields stay scalar strings (unchanged) to keep scalar targets
+                                        // (string, int, etc.) working.
+                                        if sv.Count > 1 then
+                                            jsonDict.[kvp.Key] <- box (sv.ToArray())
+                                        else
+                                            jsonDict.[kvp.Key] <- box (string sv)
 
                                     let options = JsonSerializerOptions()
 
