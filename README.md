@@ -262,7 +262,7 @@ type PostRoute =
 | Multiple body fields | `Bad of JsonBody<A> * FormBody<B>` | At most 1 body field per case |
 | Body + nested union | `Bad of JsonBody<A> * ChildRoute` | Body field cannot coexist with nested route |
 
-**Uniqueness errors** (checked by `Route.validate` and `Route.endpoints`):
+**Uniqueness errors** (`Route.validateUniqueness`, also run by `Route.validate` and `Route.endpoints`):
 
 | Error | Example | Message |
 |-------|---------|---------|
@@ -298,6 +298,7 @@ Route.allRoutes<Route>()             // Enumerate all routes
 Route.createMatcher<Route>()         // Pre-compiled URL matcher (reusable)
 Route.matchUrl<Route> method url     // One-shot URL matching
 Route.validateStructure<Route>()     // Validate path structure only
+Route.validateUniqueness<Route>()    // Detect duplicate/ambiguous routes
 Route.validatePreconditions<Route, Error> preconditions  // Check precondition coverage
 Route.validate<Route, Error> preconditions               // Full validation (for tests)
 
