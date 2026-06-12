@@ -249,6 +249,19 @@ module Route =
     let private supportedPrimitives =
         [ typeof<Guid>; typeof<string>; typeof<int>; typeof<int64>; typeof<bool> ]
 
+    /// Friendly display name for a primitive/value type in messages.
+    let internal friendlyTypeName (t: Type) : string =
+        if t = typeof<Guid> then "Guid"
+        elif t = typeof<string> then "string"
+        elif t = typeof<int> then "int"
+        elif t = typeof<int64> then "int64"
+        elif t = typeof<bool> then "bool"
+        else t.Name
+
+    /// Human-readable list of the primitives a single-case wrapper may wrap.
+    let internal supportedWrapperTypeNames =
+        supportedPrimitives |> List.map friendlyTypeName |> String.concat ", "
+
     /// Check if a type is a single-case DU wrapper for a primitive (e.g., PostId of Guid)
     let internal isSingleCaseWrapper (t: Type) =
         cachedTypePredicate
@@ -278,6 +291,51 @@ module Route =
                 && not (isBodyType ty)
                 && not (isSingleCaseWrapper ty))
             t
+
+    /// <summary>
+    /// Detects a type shaped like a single-case wrapper (one union case with one field)
+    /// whose inner type the library does not support for route extraction (e.g.
+    /// <c>Price of decimal</c>). Such a type is NOT a valid wrapper but, being a
+    /// union, would otherwise be misclassified as a nested route union. Returns the
+    /// unsupported inner type so a clear validation error can be produced.
+    /// </summary>
+    let internal tryUnsupportedWrapperInner (t: Type) : Type option =
+        // Marker types (JsonBody/FormBody/QueryParam/Returns/PreCondition/...) are
+        // themselves single-case generic unions handled elsewhere — never flag them.
+        let isMarkerType =
+            isPreconditionType t
+            || isOptionalPreconditionType t
+            || isQueryType t
+            || isOptionalQueryType t
+            || isReturnsType t
+            || isBodyType t
+            || (t.IsGenericType && t.GetGenericTypeDefinition() = typedefof<option<_>>)
+
+        if FSharpType.IsUnion(t) && not (isSingleCaseWrapper t) && not isMarkerType then
+            let cases = getUnionCasesCached t
+
+            if cases.Length = 1 && cases.[0].GetFields().Length = 1 then
+                let innerType = cases.[0].GetFields().[0].PropertyType
+                // Only flag a genuine "wrapped primitive" shape: the inner type is a
+                // plain value the library can't extract. A single-case union wrapping
+                // another union is a legitimate nested route, and marker/option types
+                // are handled elsewhere — leave those alone.
+                let innerIsRouteRelevant =
+                    FSharpType.IsUnion(innerType)
+                    || isPreconditionType innerType
+                    || isOptionalPreconditionType innerType
+                    || isQueryType innerType
+                    || isOptionalQueryType innerType
+                    || isReturnsType innerType
+                    || isBodyType innerType
+                    || (innerType.IsGenericType
+                        && innerType.GetGenericTypeDefinition() = typedefof<option<_>>)
+
+                if innerIsRouteRelevant then None else Some innerType
+            else
+                None
+        else
+            None
 
     /// Check if a field should be excluded from route path
     let internal isNonRouteField (f: Reflection.PropertyInfo) =
@@ -801,8 +859,20 @@ module Route =
         let hasNestedRouteUnion =
             case.GetFields() |> Array.exists (fun f -> isNestedRouteUnion f.PropertyType)
 
+        let unsupportedWrapperErrors =
+            case.GetFields()
+            |> Array.choose (fun f ->
+                tryUnsupportedWrapperInner f.PropertyType
+                |> Option.map (fun innerType ->
+                    $"Case '{case.Name}' field '{f.Name}' is a single-case wrapper '{f.PropertyType.Name}' "
+                    + $"around unsupported type '{friendlyTypeName innerType}'. "
+                    + $"Single-case wrappers may only wrap: {supportedWrapperTypeNames}."))
+            |> Array.toList
+
         [ if nestedCount > 1 then
               $"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)"
+
+          yield! unsupportedWrapperErrors
 
           if bodyFieldCount > 1 then
               $"Case '{case.Name}' has {bodyFieldCount} body fields (at most 1 JsonBody or FormBody allowed per case)"
@@ -825,7 +895,12 @@ module Route =
 
             let nestedErrors =
                 case.GetFields()
-                |> Array.filter (fun f -> isNestedRouteUnion f.PropertyType)
+                |> Array.filter (fun f ->
+                    // An unsupported single-case wrapper is also a union and would
+                    // otherwise be (wrongly) recursed into as a nested route. It is
+                    // already reported by validateCase, so don't descend into it.
+                    isNestedRouteUnion f.PropertyType
+                    && Option.isNone (tryUnsupportedWrapperInner f.PropertyType))
                 |> Array.toList
                 |> List.collect (fun f -> validateUnionType f.PropertyType)
 
