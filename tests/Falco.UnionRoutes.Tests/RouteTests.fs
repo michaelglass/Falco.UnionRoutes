@@ -609,6 +609,50 @@ let ``validateStructure catches multiple nested route unions`` () =
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route unions")) @>
     | Ok() -> failwith "Expected validation error for multiple nested unions"
 
+/// Single-case DU wrapping a primitive that the library does not support
+/// (decimal is not a route-extractable primitive). Such a wrapper must be
+/// reported as a validation error, not silently treated as a nested route.
+type Price = Price of decimal
+
+type UnsupportedWrapperRoute = ByPrice of price: Price
+
+/// Same shape but wrapping DateTimeOffset, another unsupported primitive.
+type Stamp = Stamp of DateTimeOffset
+
+type UnsupportedWrapperRoute2 = AtTime of at: Stamp
+
+[<Fact>]
+let ``validateStructure rejects single-case wrapper of unsupported primitive`` () =
+    let result = Route.validateStructure<UnsupportedWrapperRoute> ()
+
+    match result with
+    | Error errors ->
+        test <@ errors |> List.exists (fun e -> e.Contains("ByPrice") && e.Contains("price")) @>
+        test <@ errors |> List.exists (fun e -> e.Contains("Price") && e.Contains("Decimal")) @>
+    | Ok() -> failwith "Expected validation error for unsupported single-case wrapper"
+
+[<Fact>]
+let ``validateStructure rejects single-case wrapper of DateTimeOffset`` () =
+    let result = Route.validateStructure<UnsupportedWrapperRoute2> ()
+
+    match result with
+    | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("AtTime") && e.Contains("Stamp")) @>
+    | Ok() -> failwith "Expected validation error for unsupported single-case wrapper"
+
+[<Fact>]
+let ``validateStructure error names supported wrapper types`` () =
+    match Route.validateStructure<UnsupportedWrapperRoute> () with
+    | Error errors ->
+        let combined = String.concat " " errors
+        // The message should guide the user to the supported inner types.
+        test
+            <@
+                combined.Contains("Guid")
+                && combined.Contains("int")
+                && combined.Contains("bool")
+            @>
+    | Ok() -> failwith "Expected validation error naming supported wrapper types"
+
 // =============================================================================
 // Nested RESTful route pattern tests
 // =============================================================================
