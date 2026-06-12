@@ -158,26 +158,34 @@ type FormBody<'T> = FormBody of 'T
 type SkipAllPreconditionsAttribute() =
     inherit Attribute()
 
-/// <summary>Skip a specific <c>OverridablePreCondition&lt;'T&gt;</c> precondition type for this route case.</summary>
+/// <summary>Skip a specific <c>OverridablePreCondition&lt;'T&gt;</c> precondition for this route case.</summary>
 /// <remarks>
+/// <para>Pass the <b>inner</b> type <c>'T</c>, NOT the <c>OverridablePreCondition&lt;'T&gt;</c> wrapper.
+/// For <c>OverridablePreCondition&lt;AdminId&gt;</c> use <c>typeof&lt;AdminId&gt;</c>.</para>
 /// <para><c>PreCondition&lt;'T&gt;</c> (strict preconditions) are NOT affected - they always run.</para>
 /// <para>Can be applied multiple times to skip multiple precondition types.</para>
 /// </remarks>
 /// <example>
+/// Correct - pass the inner type:
 /// <code>
 /// type AdminRoute =
 ///     | Dashboard                                         // requires all
 ///     | [&lt;SkipPrecondition(typeof&lt;AdminId&gt;)&gt;] Profile     // skips OverridablePreCondition&lt;AdminId&gt; only
 /// </code>
+/// Incorrect - passing the wrapper type does NOT match and the precondition still runs:
+/// <code>
+/// // [&lt;SkipPrecondition(typeof&lt;OverridablePreCondition&lt;AdminId&gt;&gt;)&gt;] Profile   // WRONG
+/// </code>
 /// </example>
 /// <seealso cref="T:Falco.UnionRoutes.SkipAllPreconditionsAttribute"/>
 [<AttributeUsage(AttributeTargets.Property, AllowMultiple = true)>]
-type SkipPreconditionAttribute(preconditionType: Type) =
+type SkipPreconditionAttribute(innerPreconditionType: Type) =
     inherit Attribute()
 
-    /// <summary>Gets the inner type of the <c>OverridablePreCondition&lt;'T&gt;</c> to skip.</summary>
-    /// <value>The type to skip, e.g., <c>typeof&lt;AdminId&gt;</c> for <c>OverridablePreCondition&lt;AdminId&gt;</c>.</value>
-    member _.PreconditionType = preconditionType
+    /// <summary>Gets the inner type <c>'T</c> of the <c>OverridablePreCondition&lt;'T&gt;</c> to skip.</summary>
+    /// <value>The inner type, e.g., <c>typeof&lt;AdminId&gt;</c> for <c>OverridablePreCondition&lt;AdminId&gt;</c>
+    /// (not the wrapper type).</value>
+    member _.PreconditionType = innerPreconditionType
 
 // =========================================================================
 // Route Constraint Types
