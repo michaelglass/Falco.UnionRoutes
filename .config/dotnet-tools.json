@@ -45,7 +45,7 @@
       "rollForward": false
     },
     "fsprojlint": {
-      "version": "0.10.0-alpha.10",
+      "version": "0.10.0-alpha.11",
       "commands": [
         "fsprojlint"
       ],
