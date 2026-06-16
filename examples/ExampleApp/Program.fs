@@ -15,22 +15,26 @@ open Microsoft.Extensions.DependencyInjection
 // Route Definitions
 // =============================================================================
 
+// sync:nestedroutes-code:start
 type PostDetailRoute =
-    | Show
-    | Edit
-    | Delete
-    | Patch
+    | Show // GET    /posts/{id}
+    | Edit // GET    /posts/{id}/edit
+    | Delete // DELETE /posts/{id}
+    | Patch // PATCH  /posts/{id}
 
 type PostRoute =
-    | List of page: QueryParam<int> option
-    | Create of JsonBody<PostInput> * PreCondition<UserId>
-    | Search of query: QueryParam<string>
-    | Member of id: Guid * PostDetailRoute
+    | List of page: QueryParam<int> option // GET    /posts?page=1
+    | Create of JsonBody<PostInput> * PreCondition<UserId> // POST   /posts (JSON body + auth)
+    | Search of query: QueryParam<string> // GET    /posts/search?query=hello
+    | Member of id: Guid * PostDetailRoute //        /posts/{id}/...
+// sync:nestedroutes-code:end
 
+// sync:preconditions-code:start
 type ItemRoute =
-    | List
-    | [<SkipAllPreconditions>] Public
-    | [<SkipPrecondition(typeof<UserId>)>] Limited
+    | List // inherits preconditions
+    | [<SkipAllPreconditions>] Public // skips all overridable preconditions
+    | [<SkipPrecondition(typeof<UserId>)>] Limited // skips specific one
+// sync:preconditions-code:end
 
 type AdminRoute = Dashboard of PreCondition<AdminId>
 

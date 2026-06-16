@@ -211,12 +211,18 @@ Parser constraints are applied at endpoint registration time. `Route.info` and `
 
 `OverridablePreCondition<'T>` lets child routes opt out with attributes:
 
+<!-- sync:preconditions-code:start src=examples/ExampleApp/Program.fs -->
 ```fsharp
 type ItemRoute =
-    | List                                             // inherits preconditions
-    | [<SkipAllPreconditions>] Public                  // skips all overridable preconditions
-    | [<SkipPrecondition(typeof<UserId>)>] Limited     // skips specific one
+    | List // inherits preconditions
+    | [<SkipAllPreconditions>] Public // skips all overridable preconditions
+    | [<SkipPrecondition(typeof<UserId>)>] Limited // skips specific one
+```
+<!-- sync:preconditions-code:end -->
 
+A parent route wires the precondition in via an `OverridablePreCondition` field, which the children above can opt out of:
+
+```fsharp
 type Route =
     | Items of userId: UserId * OverridablePreCondition<UserId> * ItemRoute
 ```
@@ -228,19 +234,21 @@ type Route =
 <!-- sync:nestedroutes -->
 ### Nested Routes
 
+<!-- sync:nestedroutes-code:start src=examples/ExampleApp/Program.fs -->
 ```fsharp
 type PostDetailRoute =
-    | Show                                         // GET    /posts/{id}
-    | Edit                                         // GET    /posts/{id}/edit
-    | Delete                                       // DELETE /posts/{id}
-    | Patch                                        // PATCH  /posts/{id}
+    | Show // GET    /posts/{id}
+    | Edit // GET    /posts/{id}/edit
+    | Delete // DELETE /posts/{id}
+    | Patch // PATCH  /posts/{id}
 
 type PostRoute =
-    | List of page: QueryParam<int> option                 // GET    /posts?page=1
+    | List of page: QueryParam<int> option // GET    /posts?page=1
     | Create of JsonBody<PostInput> * PreCondition<UserId> // POST   /posts (JSON body + auth)
-    | Search of query: QueryParam<string>                  // GET    /posts/search?query=hello
-    | Member of id: Guid * PostDetailRoute                 //        /posts/{id}/...
+    | Search of query: QueryParam<string> // GET    /posts/search?query=hello
+    | Member of id: Guid * PostDetailRoute //        /posts/{id}/...
 ```
+<!-- sync:nestedroutes-code:end -->
 
 `Member` produces a param-only path (no case-name prefix). `Show`/`Delete`/`Patch` collapse to the same path with different methods. `Edit` produces `/edit`.
 <!-- sync:nestedroutes:end -->
