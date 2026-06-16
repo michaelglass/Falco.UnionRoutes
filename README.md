@@ -1,7 +1,7 @@
 <!-- sync:intro:start -->
 # Falco.UnionRoutes
 
-Define your routes as F# discriminated unions. Get exhaustive pattern matching, type-safe links, and automatic parameter extraction. Inspired by Haskell's [Servant](https://docs.servant.dev/) library.
+Define your routes as F# discriminated unions. The goal: exhaustive pattern matching, type-safe links, and automatic parameter extraction, all driven by the route type. Inspired by Haskell's [Servant](https://docs.servant.dev/) library.
 
 ```fsharp
 type PostRoute =
@@ -16,11 +16,13 @@ let handlePost route : HttpHandler =
     | Create (JsonBody input, PreCondition userId) -> Response.ofJson (createPost userId input)
 ```
 
-**What you get:**
-- automatic extraction, parsing of query params. Handlers don't need to parse query params or check if user is logged in, etc.
-- `Route.link (Detail postId)` -> `"/posts/abc-123"` (type-checked)
-- Route/query params and auth automatically extracted based on field types
+**What it aims for:**
+- Route params, query params, request bodies, and auth extracted from the field types, so handlers receive ready-to-use values.
+- Type-safe links: `Route.link (Detail postId)` -> `"/posts/abc-123"`, checked by the compiler.
+- Exhaustive handlers: the match must cover every route, so a new case is a compile error until you handle it.
 <!-- sync:intro:end -->
+
+> **Status: early alpha.** Substantially AI-written and still finding its shape. Behavior and APIs shift between versions, so expect rough edges — your mileage may vary. Issues and PRs welcome.
 
 ## Installation
 
@@ -373,8 +375,8 @@ printfn "%s" spec
 **CLI tool:**
 
 ```bash
-# Install as a global tool
-dotnet tool install Falco.UnionRoutes.Cli
+# Install as a global tool (command: falco-routes)
+dotnet tool install --global Falco.UnionRoutes.Cli
 
 # Generate to stdout (auto-detects route type)
 falco-routes MyApp/MyApp.fsproj --title "My API"
