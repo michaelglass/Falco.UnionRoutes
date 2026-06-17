@@ -38,7 +38,7 @@
       "rollForward": false
     },
     "fssemantictagger": {
-      "version": "0.13.0-alpha.15",
+      "version": "0.13.0-alpha.16",
       "commands": [
         "fssemantictagger"
       ],
