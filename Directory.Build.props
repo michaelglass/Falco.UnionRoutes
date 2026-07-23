@@ -1,5 +1,5 @@
 <Project>
   <ItemGroup>
-    <PackageReference Include="RefStamp" Version="0.1.0-alpha.1" PrivateAssets="all" />
+    <PackageReference Include="RefStamp" Version="0.1.0-alpha.2" PrivateAssets="all" />
   </ItemGroup>
 </Project>
