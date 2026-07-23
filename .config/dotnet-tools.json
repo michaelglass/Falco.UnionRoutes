@@ -24,28 +24,28 @@
       "rollForward": false
     },
     "coverageratchet": {
-      "version": "0.15.0-alpha.10",
+      "version": "0.15.0-alpha.11",
       "commands": [
         "coverageratchet"
       ],
       "rollForward": false
     },
     "syncdocs": {
-      "version": "0.13.0-alpha.3",
+      "version": "0.13.0-alpha.4",
       "commands": [
         "syncdocs"
       ],
       "rollForward": false
     },
     "fssemantictagger": {
-      "version": "0.13.0-alpha.19",
+      "version": "0.13.0-alpha.20",
       "commands": [
         "fssemantictagger"
       ],
       "rollForward": false
     },
     "fsprojlint": {
-      "version": "0.10.0-alpha.13",
+      "version": "0.10.0-alpha.14",
       "commands": [
         "fsprojlint"
       ],
