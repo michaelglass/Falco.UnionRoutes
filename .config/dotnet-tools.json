@@ -17,14 +17,14 @@
       "rollForward": false
     },
     "fsdocs-tool": {
-      "version": "21.0.0",
+      "version": "22.1.0",
       "commands": [
         "fsdocs"
       ],
       "rollForward": false
     },
     "coverageratchet": {
-      "version": "0.15.0-alpha.8",
+      "version": "0.15.0-alpha.10",
       "commands": [
         "coverageratchet"
       ],
@@ -45,7 +45,7 @@
       "rollForward": false
     },
     "fsprojlint": {
-      "version": "0.10.0-alpha.11",
+      "version": "0.10.0-alpha.13",
       "commands": [
         "fsprojlint"
       ],
