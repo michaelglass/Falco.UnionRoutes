@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.3.4 - 2026-08-04
+
+- chore(deps): update dev-tools + external dependencies
+- Add Route.enumerate: route type -> (leaf case symbol, RouteInfo)
+
+
 ## 0.3.3 - 2026-06-12
 
 - feat: make `Route.validateUniqueness` public so it can be called as a standalone uniqueness/ambiguity check
