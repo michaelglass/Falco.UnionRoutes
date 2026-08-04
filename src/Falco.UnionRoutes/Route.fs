@@ -776,6 +776,47 @@ module Route =
     let allRoutes<'TRoute> () : 'TRoute list =
         enumerateUnionValues typeof<'TRoute> |> List.map (fun o -> o :?> 'TRoute)
 
+    /// The fully-qualified leaf case symbol of a route value: the innermost union case reached by
+    /// descending nested route unions, spelled "DeclaringType.CaseName" (e.g. "AdminPages.Settings").
+    /// A tool consuming this can key on the same spelling a source-level scan of the DU emits.
+    // fsharplint:disable-next-line FL0085
+    let rec private leafCaseSymbol (value: obj) : string =
+        let valueType = value.GetType()
+        let case, fieldValues = FSharpValue.GetUnionFields(value, valueType)
+
+        let nestedIndex =
+            case.GetFields()
+            |> Array.tryFindIndex (fun f -> isNestedRouteUnion f.PropertyType)
+
+        match nestedIndex with
+        | Some idx -> leafCaseSymbol fieldValues.[idx]
+        | None -> case.DeclaringType.Name + "." + case.Name
+
+    /// <summary>Enumerates every route of a route union type as its fully-qualified leaf case
+    /// symbol paired with its <see cref="T:Falco.UnionRoutes.Route.RouteInfo"/> (HTTP method and
+    /// exact URL path, constraints and inferred parameters included).</summary>
+    /// <param name="routeType">The route union type to enumerate.</param>
+    /// <returns>One entry per route case: the leaf case symbol ("DeclaringType.CaseName") and its
+    /// <see cref="T:Falco.UnionRoutes.Route.RouteInfo"/>.</returns>
+    /// <remarks>The non-generic companion to <see cref="M:Falco.UnionRoutes.Route.enumerate``1"/>,
+    /// for a route type resolved at runtime (e.g. loaded from a built assembly by reflection).</remarks>
+    let enumerateType (routeType: Type) : (string * RouteInfo) list =
+        enumerateUnionValues routeType
+        |> List.map (fun value -> leafCaseSymbol value, info value)
+
+    /// <summary>Enumerates every route of a route union type as its fully-qualified leaf case
+    /// symbol paired with its <see cref="T:Falco.UnionRoutes.Route.RouteInfo"/>.</summary>
+    /// <typeparam name="TRoute">The route union type to enumerate.</typeparam>
+    /// <returns>One entry per route case: the leaf case symbol ("DeclaringType.CaseName") and its
+    /// method + exact URL path.</returns>
+    /// <example>
+    /// <code>
+    /// for (case, info) in Route.enumerate&lt;Route&gt;() do
+    ///     printfn "%s -> %A %s" case info.Method info.Path
+    /// </code>
+    /// </example>
+    let enumerate<'TRoute> () : (string * RouteInfo) list = enumerateType typeof<'TRoute>
+
     // =========================================================================
     // Public API - Validation
     // =========================================================================

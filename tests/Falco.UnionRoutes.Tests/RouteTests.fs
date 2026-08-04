@@ -187,6 +187,52 @@ let ``All enumerated routes have valid RouteInfo`` () =
         test <@ info.Path.StartsWith("/") @>
 
 // =============================================================================
+// enumerate tests
+// =============================================================================
+
+[<Fact>]
+let ``enumerate yields every leaf case symbol with its route info`` () =
+    let entries = Route.enumerate<PostRoute> ()
+    test <@ List.length entries = 5 @>
+
+    let symbols = entries |> List.map fst |> Set.ofList
+
+    test
+        <@
+            symbols = set
+                [ "PostRoute.List"
+                  "PostRoute.Detail"
+                  "PostRoute.Create"
+                  "PostRoute.Update"
+                  "PostRoute.Delete" ]
+        @>
+
+    let listInfo = entries |> List.find (fun (s, _) -> s = "PostRoute.List") |> snd
+    test <@ listInfo.Path = "/posts" && listInfo.Method = HttpMethod.Get @>
+
+[<Fact>]
+let ``enumerate spells a nested leaf by its own declaring union, not the root`` () =
+    let entries = Route.enumerate<TestRoute> ()
+    let symbols = entries |> List.map fst |> Set.ofList
+    test <@ List.length entries = 9 @>
+    test <@ symbols |> Set.contains "PostRoute.List" @>
+    test <@ symbols |> Set.contains "UserRoute.Profile" @>
+    test <@ symbols |> Set.contains "TestRoute.Health" @>
+    test <@ symbols |> Set.contains "TestRoute.Home" @>
+
+[<Fact>]
+let ``enumerate path carries the canonical Route.info path including inferred constraints`` () =
+    let entries = Route.enumerate<PostRoute> ()
+    let detailPath = entries |> List.find (fun (s, _) -> s = "PostRoute.Detail") |> snd
+    // Identical to the per-value canonical path — constraints/parameters and all.
+    test <@ detailPath.Path = (Route.info (PostRoute.Detail Guid.Empty)).Path @>
+    test <@ detailPath.Path.Contains "{id" @>
+
+[<Fact>]
+let ``enumerateType matches the generic enumerate`` () =
+    test <@ Route.enumerateType typeof<PostRoute> = Route.enumerate<PostRoute> () @>
+
+// =============================================================================
 // link function tests
 // =============================================================================
 
