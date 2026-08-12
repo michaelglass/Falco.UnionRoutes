@@ -144,37 +144,28 @@ type RouteAttribute(method: RouteMethod) =
 module Route =
 
     // =========================================================================
-    // Internal helpers (from RouteReflection)
+    // Internal helpers
     // =========================================================================
 
-    // -------------------------------------------------------------------------
-    // Reflection metadata caches.
-    //
-    // Union-case reflection (FSharpType.GetUnionCases) and the type-classification
-    // predicates derived from it are pure functions of a Type. The hydration and
-    // matching paths invoke them per request, so the results are memoized in
-    // module-level concurrent dictionaries keyed by Type. Behavior is unchanged:
-    // these caches only avoid recomputing values that are constant for a given type.
-    // -------------------------------------------------------------------------
+    // Union-case reflection and the type predicates derived from it are pure
+    // functions of a Type, and the hydration and matching paths call them per
+    // request — hence the module-level caches keyed by Type.
 
     let private unionCasesCache = ConcurrentDictionary<Type, UnionCaseInfo[]>()
 
-    /// Cached FSharpType.GetUnionCases. Union-case metadata is constant per type.
     let private getUnionCasesCached (t: Type) : UnionCaseInfo[] =
         unionCasesCache.GetOrAdd(t, fun ty -> FSharpType.GetUnionCases(ty))
 
-    /// Memoize a Type -> bool predicate in a concurrent dictionary.
     let private cachedTypePredicate (cache: ConcurrentDictionary<Type, bool>) (compute: Type -> bool) (t: Type) : bool =
         cache.GetOrAdd(t, compute)
 
     let private singleCaseWrapperCache = ConcurrentDictionary<Type, bool>()
     let private nestedRouteUnionCache = ConcurrentDictionary<Type, bool>()
 
-    // Precompiled regex for better performance during route enumeration
     let private kebabCaseRegex =
         Regex(@"([a-z])([A-Z])|([A-Z]+)([A-Z][a-z])", RegexOptions.Compiled)
 
-    /// Converts PascalCase to kebab-case. Internal helper for path generation.
+    /// Converts PascalCase to kebab-case.
     let internal toKebabCase (s: string) =
         kebabCaseRegex
             .Replace(
@@ -187,7 +178,7 @@ module Route =
             )
             .ToLowerInvariant()
 
-    /// Converts RouteMethod enum to HttpMethod DU. Internal helper.
+    /// Converts RouteMethod enum to HttpMethod DU.
     let internal toHttpMethod (rm: RouteMethod) : HttpMethod =
         match rm with
         | RouteMethod.Get -> HttpMethod.Get
@@ -198,7 +189,7 @@ module Route =
         | RouteMethod.Any -> HttpMethod.Any
         | unknown -> failwith $"Unknown RouteMethod: {int unknown}"
 
-    /// Gets the RouteAttribute from a union case, if present. Internal helper.
+    /// Gets the RouteAttribute from a union case, if present.
     let private getRouteAttr (case: UnionCaseInfo) : RouteAttribute option =
         case.GetCustomAttributes(typeof<RouteAttribute>)
         |> Array.tryHead
@@ -1103,7 +1094,7 @@ module Route =
     // Public API - Falco Integration
     // =========================================================================
 
-    /// Converts HttpMethod to Falco's route function. Internal helper.
+    /// Converts HttpMethod to Falco's route function.
     let internal toFalcoMethod (method: HttpMethod) =
         match method with
         | HttpMethod.Get -> get
@@ -1491,7 +1482,6 @@ module Route =
     // =========================================================================
 
     /// Recursive hydration helper that works with obj types for reflection-based traversal.
-    /// Returns Task<Result<obj, 'E>> where the obj is the hydrated route value.
     let rec private hydrateValue<'E>
         (preconditions: PreconditionExtractor<'E> list)
         (parsers: FieldParser list)
@@ -1607,7 +1597,6 @@ module Route =
             }
 
     /// Creates an extraction function that populates route fields from HTTP context.
-    /// Internal - used by Route.endpoints. Hydration is recursive.
     let internal extractor<'Route, 'E>
         (preconditions: PreconditionExtractor<'E> list)
         (parsers: FieldParser list)
