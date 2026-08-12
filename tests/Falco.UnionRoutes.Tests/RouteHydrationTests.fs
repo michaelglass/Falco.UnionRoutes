@@ -132,8 +132,8 @@ let combineErrors (errors: TestError list) =
     | [ single ] -> single
     | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
 
-// Precondition factories (create fresh each time to avoid module initialization issues)
-// Each returns a list covering both PreCondition<'T> and OverridablePreCondition<'T>
+// Functions, not values: each test builds its own extractors rather than sharing
+// module-level ones whose initialization order is not guaranteed.
 let userPreconditions () =
     Extractor.precondition<UserId, TestError> mockUserAuth
 
@@ -296,7 +296,6 @@ let ``returns precondition error even with valid Guid when not authenticated`` (
             hydrate () (SimpleRoute.WithBoth(PreCondition(UserId Guid.Empty), Guid.Empty))
 
         let! result = pipeline ctx
-        // Precondition errors preserve their original type
         Assert.Equal(Error NotAuthenticated, result)
     }
 
@@ -402,7 +401,6 @@ let ``accumulates errors when both preconditions fail`` () =
         // combineErrors should combine both errors
         match result with
         | Error(BadRequest msg) ->
-            // Both NotAuthenticated and Forbidden should be in the combined error
             Assert.Contains("NotAuthenticated", msg)
             Assert.Contains("Forbidden", msg)
         | Error NotAuthenticated -> Assert.Fail("Expected combined error, got single NotAuthenticated")
@@ -932,10 +930,10 @@ let ``OverridablePreCondition with SkipAllPreconditions provides sentinel value`
                 ))
 
         let! result = pipeline ctx
-        // Should succeed because OverridablePreCondition is skipped - provides sentinel value
+
         match result with
         | Ok(ParentWithOverridablePreCondition.Children(OverridablePreCondition(UserId uid), ChildRoute.Public)) ->
-            // Sentinel value should be Guid.Empty (default for value type inside wrapper)
+            // Sentinel is the inner type's default, not an extracted value.
             test <@ uid = Guid.Empty @>
         | Ok _ -> Assert.Fail("Unexpected route structure")
         | Error e -> Assert.Fail($"Expected Ok, got Error: {e}")
@@ -973,7 +971,6 @@ let ``PreCondition is NOT affected by SkipAllPreconditions`` () =
                 ))
 
         let! result = pipeline ctx
-        // Should fail because PreCondition<AdminId> always runs (not skippable)
         Assert.Equal(Error Forbidden, result)
     }
 

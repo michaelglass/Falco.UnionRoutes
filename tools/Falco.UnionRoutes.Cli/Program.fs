@@ -319,18 +319,14 @@ let main argv =
         eprintfn "Error: expected an .fsproj file, got: %s" fsprojPath
         exit 1
 
-    // Build unless --no-build
     if not args.NoBuild then
         buildProject fsprojPath
 
-    // Find and load the output DLL
     let dllPath = getDllPath fsprojPath
     let asm = loadAssembly dllPath
 
-    // Resolve route type
     let routeType = resolveRouteType asm args.RouteTypeName
 
-    // Generate spec
     let title = args.Title |> Option.defaultValue (asm.GetName().Name)
 
     let json =
@@ -340,7 +336,6 @@ let main argv =
             eprintfn "Error generating spec: %s" ex.Message
             exit 1
 
-    // Output
     match args.OutputPath with
     | Some path ->
         File.WriteAllText(path, json)

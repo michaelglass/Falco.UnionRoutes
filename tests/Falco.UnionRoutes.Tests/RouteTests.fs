@@ -224,7 +224,6 @@ let ``enumerate spells a nested leaf by its own declaring union, not the root`` 
 let ``enumerate path carries the canonical Route.info path including inferred constraints`` () =
     let entries = Route.enumerate<PostRoute> ()
     let detailPath = entries |> List.find (fun (s, _) -> s = "PostRoute.Detail") |> snd
-    // Identical to the per-value canonical path — constraints/parameters and all.
     test <@ detailPath.Path = (Route.info (PostRoute.Detail Guid.Empty)).Path @>
     test <@ detailPath.Path.Contains "{id" @>
 
@@ -333,13 +332,13 @@ let ``toHttpMethod converts all RouteMethod values`` () =
 
 [<Fact>]
 let ``toFalcoMethod returns function for all HTTP methods`` () =
-    // We can't compare functions directly, but we can verify they produce valid endpoints
+    // Functions aren't comparable, so the assertion is only that every method
+    // builds an endpoint without throwing.
     let testPath = "/test"
 
     let handler: Falco.HttpHandler =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
-    // Just verify each method returns a function that produces an endpoint without error
     let _getEndpoint = Route.toFalcoMethod HttpMethod.Get testPath handler
     let _postEndpoint = Route.toFalcoMethod HttpMethod.Post testPath handler
     let _putEndpoint = Route.toFalcoMethod HttpMethod.Put testPath handler
@@ -348,7 +347,6 @@ let ``toFalcoMethod returns function for all HTTP methods`` () =
 
     let _patchEndpoint = Route.toFalcoMethod HttpMethod.Patch testPath handler
     let _anyEndpoint = Route.toFalcoMethod HttpMethod.Any testPath handler
-    // If we got here without exception, all methods work
     test <@ true @>
 
 // =============================================================================
@@ -447,7 +445,6 @@ let ``Issue #1 - Single-case wrapper with PreCondition should not append {Item} 
         Issue1Route.Detail(PreCondition(WrappedUserId(Guid.NewGuid())), WrappedPostId(Guid.NewGuid()))
 
     let info = Route.info route
-    // Should be /posts/{id:guid}, not /posts/{id}/{Item}
     test <@ info.Path = "/posts/{id:guid}" @>
 
 [<Fact>]
@@ -459,14 +456,12 @@ let ``Issue #1 - link with single-case wrapper should not include Item`` () =
         Issue1Route.Detail(PreCondition(WrappedUserId(userId)), WrappedPostId(postId))
 
     let url = Route.link route
-    // Should substitute the postId, not include {Item} or extra segments
     test <@ url = "/posts/22222222-2222-2222-2222-222222222222" @>
 
 // =============================================================================
 // Nested routes with params tests
 // =============================================================================
 
-// Test types for nested routes with params
 type NestedItemId = NestedItemId of Guid
 
 type UserItemRoute =
@@ -489,7 +484,6 @@ let ``Nested route with params includes case name in path`` () =
         NestedParentRoute.Users(Guid.Empty, NestedUserRoute.Items UserItemRoute.List)
 
     let info = Route.info route
-    // Should be /users/{userId:guid}/items, not just /{userId:guid}/items
     test <@ info.Path = "/users/{userId:guid}/items" @>
 
 [<Fact>]
@@ -525,11 +519,9 @@ let ``Nested route without params still works (no case name added)`` () =
     // No params on Items, so just uses kebab-case of case name
     test <@ info.Path = "/items" @>
 
-// Issue #1 follow-up: Single-case route unions with only PreCondition<'T> field were incorrectly
-// identified as "single-case wrapper types" because isSingleCaseWrapper wasn't checking
-// if the inner type was a primitive. This caused route enumeration to fail.
-// Example: type ApiAdminOrgRoute = Search of PreCondition<AdminUserId>
-// Was incorrectly treated as a wrapper type like "PostId of Guid"
+// Issue #1 follow-up: a single-case union whose only field is PreCondition<'T> must not be
+// classified as a single-case wrapper (isSingleCaseWrapper requires a primitive inner type);
+// misclassifying it makes route enumeration yield nothing.
 
 type AdminUserId = AdminUserId of Guid
 
@@ -545,7 +537,6 @@ type MultiSingleCasePreConditionRoutes =
 [<Fact>]
 let ``Issue #1 - Single-case route with PreCondition should enumerate correctly`` () =
     let routes = Route.allRoutes<SingleCasePreConditionRoute> ()
-    // Should enumerate to exactly 1 route, not 0 or error
     test <@ List.length routes = 1 @>
 
 [<Fact>]
@@ -554,13 +545,11 @@ let ``Issue #1 - Single-case route with PreCondition should have correct path`` 
         SingleCasePreConditionRoute.Search(PreCondition(AdminUserId(Guid.NewGuid())))
 
     let info = Route.info route
-    // Should be /search, not / or something with {Item}
     test <@ info.Path = "/search" @>
 
 [<Fact>]
 let ``Issue #1 - Multiple single-case PreCondition routes should all enumerate`` () =
     let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes> ()
-    // Should enumerate all 3 routes
     test <@ List.length routes = 3 @>
 
 [<Fact>]
@@ -568,7 +557,6 @@ let ``Issue #1 - Multiple single-case PreCondition routes should have distinct p
     let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes> ()
 
     let paths = routes |> List.map (Route.info >> (fun i -> i.Path))
-    // All paths should be different (not all mapping to "/")
     test <@ List.distinct paths |> List.length = 3 @>
     test <@ paths |> List.contains "/orgs/search" @>
     test <@ paths |> List.contains "/users/search" @>
@@ -690,7 +678,7 @@ let ``validateStructure error names supported wrapper types`` () =
     match Route.validateStructure<UnsupportedWrapperRoute> () with
     | Error errors ->
         let combined = String.concat " " errors
-        // The message should guide the user to the supported inner types.
+
         test
             <@
                 combined.Contains("Guid")
@@ -848,7 +836,6 @@ let ``RESTful nested routes - link generation`` () =
 
 /// Reproduces a bug where two POST cases with only parameters (no fieldless sub-cases)
 /// both get their case name dropped by convention, producing identical routes.
-/// Analogous to AdminJobs.Run and AdminJobs.Schedule in the Intelligence project.
 type JobRoute =
     | [<Route>] List
     | [<Route(RouteMethod.Post)>] Run of job: string
@@ -990,9 +977,8 @@ let ``endpoints sorts more specific routes before less specific`` () =
           ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
 
     let endpoints = Route.endpoints config handler
-    // First endpoint should be /posts/new (more specific), second /posts/{id}
     test <@ List.length endpoints = 2 @>
-    // Falco HttpEndpoint doesn't expose path directly, but we can verify via route info ordering
+    // Falco HttpEndpoint doesn't expose its path, so ordering is checked via route info.
     let routes = Route.allRoutes<SpecificityRoute> ()
 
     let infos =
@@ -1406,9 +1392,9 @@ let ``endpoints applies constrained parser constraints to route path`` () =
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
-    // Verify the path has the :alpha constraint applied via Route.info + parser
+    // Route.info does not apply parser constraints — only endpoints does — so the
+    // path here is still unconstrained.
     let info = Route.info (ConstrainedSlugRoute.ByConstrainedSlug(ConstrainedSlug ""))
-    // Route.info doesn't apply parser constraints, but endpoints does
     test <@ info.Path = "/by-constrained-slug/{slug}" @>
 
 type UnconstrainedTag = UnconstrainedTag of string
@@ -1432,7 +1418,6 @@ let ``endpoints with unconstrained parser produces no suffix`` () =
     // This exercises the suffix = "" branch in applyParserConstraints
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
-    // With no constraints, the path remains unchanged
     let info = Route.info (UnconstrainedTagRoute.ByTag(UnconstrainedTag ""))
     test <@ info.Path = "/by-tag/{tag}" @>
 

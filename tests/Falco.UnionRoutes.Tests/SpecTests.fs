@@ -469,10 +469,8 @@ let ``mixed route with path param and Returns has both`` () =
     // Show of id: Guid * Returns<PostInput> -> GET /{id}
     let showPath = paths["/{id}"] :?> JsonObject
     let getOp = showPath["get"] :?> JsonObject
-    // Has path parameter
     let parameters = getOp["parameters"] :?> JsonArray
     test <@ parameters.Count = 1 @>
-    // Has response schema
     let responses = getOp["responses"] :?> JsonObject
     let ok = responses["200"] :?> JsonObject
     test <@ not (isNull ok["content"]) @>
@@ -484,9 +482,7 @@ let ``mixed route with body and precondition has body but no precondition param`
     // Create of JsonBody<PostInput> * PreCondition<Guid> -> POST /
     let createPath = paths["/"] :?> JsonObject
     let postOp = createPath["post"] :?> JsonObject
-    // Has request body
     test <@ not (isNull postOp["requestBody"]) @>
-    // Should have no parameters (PreCondition is excluded)
     test <@ isNull postOp["parameters"] @>
 
 [<Fact>]

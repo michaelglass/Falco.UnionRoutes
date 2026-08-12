@@ -36,7 +36,7 @@ module Spec =
         Regex.Replace(path, @"\{([^:}]+)(:[^}]*)?\}", "{${1}}")
 
     /// Map an F# type to an OpenAPI JSON Schema object.
-    /// Returns (schema, schemasToAdd) where schemasToAdd are record types for components/schemas.
+    /// Record types are added to <c>schemas</c> as a side effect and referenced by $ref.
     let rec private typeToSchema (schemas: JsonObject) (t: Type) : JsonObject =
         if t = typeof<int> then
             let o = JsonObject()
