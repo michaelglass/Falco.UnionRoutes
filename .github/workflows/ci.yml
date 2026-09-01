@@ -17,3 +17,8 @@ jobs:
     with:
       solution: Falco.UnionRoutes.sln
       fantomas-paths: 'src/ tests/ examples/ tools/'
+
+  lint-project:
+    uses: michaelglass/MichaelsWackyFsPackageTools/.github/workflows/michaels-wacky-lint-project.yml@main
+    permissions:
+      contents: read
