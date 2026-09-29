@@ -38,14 +38,14 @@
       "rollForward": false
     },
     "fssemantictagger": {
-      "version": "0.14.0-alpha.18",
+      "version": "0.14.0-alpha.19",
       "commands": [
         "fssemantictagger"
       ],
       "rollForward": false
     },
     "fsprojlint": {
-      "version": "0.10.0-alpha.18",
+      "version": "0.10.0-alpha.19",
       "commands": [
         "fsprojlint"
       ],
