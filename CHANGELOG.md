@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.5 - 2026-09-30
+
 - chore(deps): bump the build-time `Microsoft.SourceLink.GitHub` 10.0.301 → 10.0.401 (past the CVE-2026-62900 fix in 10.0.303). SourceLink runs only when packing and is not a dependency of the package, so consumers are unaffected. `Falco` stays at 5.2.0. No API changes.
 
 ## 0.3.4 - 2026-08-04
