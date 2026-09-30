@@ -409,19 +409,21 @@ module Route =
         | None -> ""
         | Some attr ->
             let parts =
-                [ if not (isNull attr.Constraints) then
-                      for c in attr.Constraints do
-                          renderConstraint c
-                  if attr.MinLength >= 0 then
-                      $":minlength({attr.MinLength})"
-                  if attr.MaxLength >= 0 then
-                      $":maxlength({attr.MaxLength})"
-                  if attr.MinValue > System.Int32.MinValue then
-                      $":min({attr.MinValue})"
-                  if attr.MaxValue < System.Int32.MaxValue then
-                      $":max({attr.MaxValue})"
-                  if not (isNull attr.Pattern) then
-                      $":regex({attr.Pattern})" ]
+                [
+                    if not (isNull attr.Constraints) then
+                        for c in attr.Constraints do
+                            renderConstraint c
+                    if attr.MinLength >= 0 then
+                        $":minlength({attr.MinLength})"
+                    if attr.MaxLength >= 0 then
+                        $":maxlength({attr.MaxLength})"
+                    if attr.MinValue > System.Int32.MinValue then
+                        $":min({attr.MinValue})"
+                    if attr.MaxValue < System.Int32.MaxValue then
+                        $":max({attr.MaxValue})"
+                    if not (isNull attr.Pattern) then
+                        $":regex({attr.Pattern})"
+                ]
 
             parts |> String.concat ""
 
@@ -877,13 +879,15 @@ module Route =
         let missingInFields = Set.difference pathParams fieldNames
         let missingInPath = Set.difference fieldNames pathParams
 
-        [ if not (Set.isEmpty missingInFields) then
-              let missingStr = missingInFields |> String.concat ", "
-              $"Path params not found in fields for '{case.Name}': {missingStr}"
+        [
+            if not (Set.isEmpty missingInFields) then
+                let missingStr = missingInFields |> String.concat ", "
+                $"Path params not found in fields for '{case.Name}': {missingStr}"
 
-          if not (Set.isEmpty missingInPath) then
-              let missingStr = missingInPath |> String.concat ", "
-              $"Fields not in path for '{case.Name}': {missingStr}" ]
+            if not (Set.isEmpty missingInPath) then
+                let missingStr = missingInPath |> String.concat ", "
+                $"Fields not in path for '{case.Name}': {missingStr}"
+        ]
 
     let private countNestedRouteUnions (case: UnionCaseInfo) : int =
         case.GetFields()
@@ -912,23 +916,25 @@ module Route =
                     + $"Single-case wrappers may only wrap: {supportedWrapperTypeNames}."))
             |> Array.toList
 
-        [ if nestedCount > 1 then
-              $"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)"
+        [
+            if nestedCount > 1 then
+                $"Case '{case.Name}' has {nestedCount} nested route unions (max 1 supported)"
 
-          yield! unsupportedWrapperErrors
+            yield! unsupportedWrapperErrors
 
-          if bodyFieldCount > 1 then
-              $"Case '{case.Name}' has {bodyFieldCount} body fields (at most 1 JsonBody or FormBody allowed per case)"
+            if bodyFieldCount > 1 then
+                $"Case '{case.Name}' has {bodyFieldCount} body fields (at most 1 JsonBody or FormBody allowed per case)"
 
-          if bodyFieldCount > 0 && hasNestedRouteUnion then
-              $"Case '{case.Name}' has both a body field and a nested route union (body stream can only be read once)"
+            if bodyFieldCount > 0 && hasNestedRouteUnion then
+                $"Case '{case.Name}' has both a body field and a nested route union (body stream can only be read once)"
 
-          yield! validatePathChars path
-          yield! validateBalancedBraces path
-          yield! validateNoDuplicateParams path
+            yield! validatePathChars path
+            yield! validateBalancedBraces path
+            yield! validateNoDuplicateParams path
 
-          if path.Contains("{") then
-              yield! validatePathParamsMatchFields case path ]
+            if path.Contains("{") then
+                yield! validatePathParamsMatchFields case path
+        ]
 
     let rec private validateUnionType (unionType: Type) : string list =
         getUnionCasesCached unionType
@@ -1061,16 +1067,18 @@ module Route =
 
         grouped
         |> List.collect (fun (_method, routes) ->
-            [ for i in 0 .. routes.Length - 2 do
-                  for j in i + 1 .. routes.Length - 1 do
-                      let (methodA, pathA, parsedA, caseA) = routes.[i]
-                      let (_methodB, pathB, parsedB, caseB) = routes.[j]
+            [
+                for i in 0 .. routes.Length - 2 do
+                    for j in i + 1 .. routes.Length - 1 do
+                        let (methodA, pathA, parsedA, caseA) = routes.[i]
+                        let (_methodB, pathB, parsedB, caseB) = routes.[j]
 
-                      if routesOverlap parsedA parsedB then
-                          if areDuplicateSegments parsedA parsedB then
-                              $"Duplicate route: '{caseA}' and '{caseB}' both resolve to {methodA} {pathA}"
-                          elif not (isMoreSpecific parsedA parsedB) && not (isMoreSpecific parsedB parsedA) then
-                              $"Ambiguous routes: '{caseA}' ({methodA} {pathA}) and '{caseB}' ({methodA} {pathB}) overlap with no clear specificity winner" ])
+                        if routesOverlap parsedA parsedB then
+                            if areDuplicateSegments parsedA parsedB then
+                                $"Duplicate route: '{caseA}' and '{caseB}' both resolve to {methodA} {pathA}"
+                            elif not (isMoreSpecific parsedA parsedB) && not (isMoreSpecific parsedB parsedA) then
+                                $"Ambiguous routes: '{caseA}' ({methodA} {pathA}) and '{caseB}' ({methodA} {pathB}) overlap with no clear specificity winner"
+            ])
 
     /// <summary>Validates that no two routes resolve to the same method+path and detects ambiguous overlaps.</summary>
     /// <typeparam name="Route">The route union type to validate.</typeparam>
@@ -1459,12 +1467,12 @@ module Route =
     /// </example>
     let validate<'Route, 'E> (preconditions: PreconditionExtractor<'E> list) : Result<unit, string list> =
         let structureErrors =
-            match validateStructure<'Route> () with
+            match validateStructure<'Route>() with
             | Ok() -> []
             | Error errors -> errors
 
         let uniquenessErrors =
-            match validateUniqueness<'Route> () with
+            match validateUniqueness<'Route>() with
             | Ok() -> []
             | Error errors -> errors
 
@@ -1608,7 +1616,8 @@ module Route =
             task {
                 let leafCaseInfo = findLeafCaseInfo (box route)
 
-                let! result = hydrateValue preconditions parsers makeError combineErrors leafCaseInfo (box route) ctx
+                let! result =
+                    hydrateValue preconditions parsers makeError combineErrors leafCaseInfo (box route) ctx
 
                 match result with
                 | Ok hydratedObj -> return Ok(hydratedObj :?> 'Route)
@@ -1711,12 +1720,12 @@ module Route =
     /// </example>
     let endpoints<'TRoute, 'E> (config: EndpointConfig<'E>) (routeHandler: 'TRoute -> HttpHandler) : HttpEndpoint list =
         let structureErrors =
-            match validateStructure<'TRoute> () with
+            match validateStructure<'TRoute>() with
             | Ok() -> []
             | Error errors -> errors
 
         let uniquenessErrors =
-            match validateUniqueness<'TRoute> () with
+            match validateUniqueness<'TRoute>() with
             | Ok() -> []
             | Error errors -> errors
 
@@ -1729,7 +1738,7 @@ module Route =
         let hydrate =
             extractor<'TRoute, 'E> config.Preconditions config.Parsers config.MakeError config.CombineErrors
 
-        allRoutes<'TRoute> ()
+        allRoutes<'TRoute>()
         |> List.map (fun route ->
             let routeInfo = info route
             let path = applyParserConstraints config.Parsers (box route) routeInfo.Path
@@ -1758,11 +1767,13 @@ module Route =
     /// <summary>A compiled entry used for URL matching.</summary>
     [<NoComparison; NoEquality>]
     type internal MatchEntry<'TRoute> =
-        { Route: 'TRoute
-          Method: HttpMethod
-          Path: string
-          Segments: string list
-          ParamFields: (string * Type) list }
+        {
+            Route: 'TRoute
+            Method: HttpMethod
+            Path: string
+            Segments: string list
+            ParamFields: (string * Type) list
+        }
 
     /// <summary>Unwrap a single-case DU wrapper type to its inner primitive type.</summary>
     let private unwrapFieldType (fieldType: Type) : Type =
@@ -1926,7 +1937,7 @@ module Route =
     /// </example>
     let createMatcher<'TRoute> () : RouteMatcher<'TRoute> =
         let entries =
-            allRoutes<'TRoute> ()
+            allRoutes<'TRoute>()
             |> List.map (fun route ->
                 let routeInfo = info route
 
@@ -1937,11 +1948,13 @@ module Route =
                 let segments =
                     routeInfo.Path.Split('/', StringSplitOptions.RemoveEmptyEntries) |> Array.toList
 
-                { Route = route
-                  Method = routeInfo.Method
-                  Path = routeInfo.Path
-                  Segments = segments
-                  ParamFields = paramFields })
+                {
+                    Route = route
+                    Method = routeInfo.Method
+                    Path = routeInfo.Path
+                    Segments = segments
+                    ParamFields = paramFields
+                })
 
         RouteMatcher(entries)
 
@@ -1955,5 +1968,5 @@ module Route =
     /// <param name="url">The URL path to match.</param>
     /// <returns>Ok with the matched route value, or Error with match failure details.</returns>
     let matchUrl<'TRoute> (method: HttpMethod) (url: string) : Result<'TRoute, MatchError> =
-        let matcher = createMatcher<'TRoute> ()
+        let matcher = createMatcher<'TRoute>()
         matcher.Match(method, url)

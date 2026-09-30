@@ -63,17 +63,21 @@ let slugParser =
 // =============================================================================
 
 let endpointConfig: EndpointConfig<AppError> =
-    { Preconditions =
-        [ yield! Extractor.precondition<UserId, AppError> Handlers.requireAuth
-          yield! Extractor.precondition<AdminId, AppError> Handlers.requireAdmin ]
-      Parsers = [ slugParser ]
-      MakeError = fun msg -> BadRequest msg
-      CombineErrors =
-        fun errors ->
-            match errors with
-            | [ single ] -> single
-            | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
-      ToErrorResponse = Handlers.toErrorResponse }
+    {
+        Preconditions =
+            [
+                yield! Extractor.precondition<UserId, AppError> Handlers.requireAuth
+                yield! Extractor.precondition<AdminId, AppError> Handlers.requireAdmin
+            ]
+        Parsers = [ slugParser ]
+        MakeError = fun msg -> BadRequest msg
+        CombineErrors =
+            fun errors ->
+                match errors with
+                | [ single ] -> single
+                | multiple -> BadRequest(multiple |> List.map string |> String.concat "; ")
+        ToErrorResponse = Handlers.toErrorResponse
+    }
 
 // =============================================================================
 // Home page — demonstrates Route.allRoutes, Route.info, Route.link
@@ -98,94 +102,114 @@ let makeBrowsable (route: Route) (path: string) =
     | _ -> path
 
 let home: HttpHandler =
-    let allRoutes = Route.allRoutes<Route> ()
+    let allRoutes = Route.allRoutes<Route>()
 
     Handlers.layout
         "Falco.UnionRoutes Example"
-        [ Elem.h1 [] [ Text.raw "Falco.UnionRoutes Example" ]
-          Elem.p
-              []
-              [ Text.raw $"Discovered {allRoutes.Length} routes via "
-                Elem.code [] [ Text.raw "Route.allRoutes<Route>()" ] ]
+        [
+            Elem.h1 [] [ Text.raw "Falco.UnionRoutes Example" ]
+            Elem.p
+                []
+                [
+                    Text.raw $"Discovered {allRoutes.Length} routes via "
+                    Elem.code [] [ Text.raw "Route.allRoutes<Route>()" ]
+                ]
 
-          Elem.p
-              []
-              [ Elem.a [ Attr.href "/login" ] [ Text.raw "Log in" ]
-                Text.raw " | "
-                Elem.form
-                    [ Attr.method "post"; Attr.action "/logout"; Attr.style "display:inline" ]
-                    [ Elem.input [ Attr.type' "submit"; Attr.value "Log out" ] ] ]
+            Elem.p
+                []
+                [
+                    Elem.a [ Attr.href "/login" ] [ Text.raw "Log in" ]
+                    Text.raw " | "
+                    Elem.form
+                        [ Attr.method "post"; Attr.action "/logout"; Attr.style "display:inline" ]
+                        [ Elem.input [ Attr.type' "submit"; Attr.value "Log out" ] ]
+                ]
 
-          // Route table via Route.info
-          Elem.h2 [] [ Text.raw "All routes" ]
-          Elem.table
-              []
-              [ Elem.thead
-                    []
-                    [ Elem.tr
-                          []
-                          [ Elem.th [] [ Text.raw "Method" ]
-                            Elem.th [] [ Text.raw "Path" ]
-                            Elem.th [] [ Text.raw "Link" ] ] ]
-                Elem.tbody
-                    []
-                    (allRoutes
-                     |> List.map (fun route ->
-                         let info = Route.info route
-                         let methodStr = info.Method.ToString().ToUpper()
-                         let browsable = makeBrowsable route info.Path
+            // Route table via Route.info
+            Elem.h2 [] [ Text.raw "All routes" ]
+            Elem.table
+                []
+                [
+                    Elem.thead
+                        []
+                        [
+                            Elem.tr
+                                []
+                                [
+                                    Elem.th [] [ Text.raw "Method" ]
+                                    Elem.th [] [ Text.raw "Path" ]
+                                    Elem.th [] [ Text.raw "Link" ]
+                                ]
+                        ]
+                    Elem.tbody
+                        []
+                        (allRoutes
+                         |> List.map (fun route ->
+                             let info = Route.info route
+                             let methodStr = info.Method.ToString().ToUpper()
+                             let browsable = makeBrowsable route info.Path
 
-                         Elem.tr
-                             []
-                             [ Elem.td [] [ Elem.code [] [ Text.raw methodStr ] ]
-                               Elem.td [] [ Elem.code [] [ Text.raw info.Path ] ]
-                               Elem.td
-                                   []
-                                   [ if info.Method = HttpMethod.Get then
-                                         Elem.a [ Attr.href browsable ] [ Text.raw browsable ]
-                                     else
-                                         Text.raw "(use curl)" ] ])) ]
+                             Elem.tr
+                                 []
+                                 [
+                                     Elem.td [] [ Elem.code [] [ Text.raw methodStr ] ]
+                                     Elem.td [] [ Elem.code [] [ Text.raw info.Path ] ]
+                                     Elem.td
+                                         []
+                                         [
+                                             if info.Method = HttpMethod.Get then
+                                                 Elem.a [ Attr.href browsable ] [ Text.raw browsable ]
+                                             else
+                                                 Text.raw "(use curl)"
+                                         ]
+                                 ]))
+                ]
 
-          // Route.link examples
-          Elem.h2 [] [ Text.raw "Route.link examples" ]
-          Elem.pre
-              []
-              [ Text.raw
-                    $"""Route.link Root = "{Route.link Root}"
+            // Route.link examples
+            Elem.h2 [] [ Text.raw "Route.link examples" ]
+            Elem.pre
+                []
+                [
+                    Text.raw
+                        $"""Route.link Root = "{Route.link Root}"
 Route.link (Health(Returns())) = "{Route.link (Health(Returns()))}"
 Route.link (Posts (Member ({sampleId}, Show))) = "{Route.link (Posts(Member(sampleId, Show)))}"
 Route.link (Article (Slug "hello-world")) = "{Route.link (Article(Slug "hello-world"))}"
 Route.link (Items (UserId {sampleId}, OverridablePreCondition (UserId {sampleId}), List)) = "{Route.link (Items(UserId sampleId, OverridablePreCondition(UserId sampleId), ItemRoute.List))}"
-Route.link (Tag "fsharp") = "{Route.link (Tag "fsharp")}" """ ]
+Route.link (Tag "fsharp") = "{Route.link (Tag "fsharp")}" """
+                ]
 
-          // Route.createMatcher / Route.matchUrl examples
-          Elem.h2 [] [ Text.raw "Route.createMatcher examples" ]
-          Elem.pre
-              []
-              [ Text.raw (
-                    let routeMatcher = Route.createMatcher<Route> ()
+            // Route.createMatcher / Route.matchUrl examples
+            Elem.h2 [] [ Text.raw "Route.createMatcher examples" ]
+            Elem.pre
+                []
+                [
+                    Text.raw (
+                        let routeMatcher = Route.createMatcher<Route>()
 
-                    let matchResult url method =
-                        match routeMatcher.Match(method, url) with
-                        | Ok route -> $"%A{route}"
-                        | Error Route.NoMatchingRoute -> "NoMatchingRoute"
-                        | Error(Route.ParameterError(_, name, value, expected)) ->
-                            $"ParameterError: '%s{name}' value '%s{value}' is not a valid %s{expected}"
+                        let matchResult url method =
+                            match routeMatcher.Match(method, url) with
+                            | Ok route -> $"%A{route}"
+                            | Error Route.NoMatchingRoute -> "NoMatchingRoute"
+                            | Error(Route.ParameterError(_, name, value, expected)) ->
+                                $"ParameterError: '%s{name}' value '%s{value}' is not a valid %s{expected}"
 
-                    $"""matcher.Match(GET, "/") = {matchResult "/" HttpMethod.Get}
+                        $"""matcher.Match(GET, "/") = {matchResult "/" HttpMethod.Get}
 matcher.Match(GET, "/health") = {matchResult "/health" HttpMethod.Get}
 matcher.Match(GET, "/posts/{sampleId}") = {matchResult $"/posts/{sampleId}" HttpMethod.Get}
 matcher.Match(DELETE, "/posts/{sampleId}") = {matchResult $"/posts/{sampleId}" HttpMethod.Delete}
 matcher.Match(GET, "/posts/not-a-guid") = {matchResult "/posts/not-a-guid" HttpMethod.Get}
 matcher.Match(GET, "/nonexistent") = {matchResult "/nonexistent" HttpMethod.Get}"""
-                ) ]
+                    )
+                ]
 
-          // curl examples
-          Elem.h2 [] [ Text.raw "Try with curl" ]
-          Elem.pre
-              []
-              [ Text.raw
-                    $"""# Log in first (creates auth cookie)
+            // curl examples
+            Elem.h2 [] [ Text.raw "Try with curl" ]
+            Elem.pre
+                []
+                [
+                    Text.raw
+                        $"""# Log in first (creates auth cookie)
 curl -c cookies.txt -X POST http://localhost:5000/login -d "userId={sampleId}&isAdmin=true"
 
 # Create post (requires auth cookie + JSON body)
@@ -201,7 +225,9 @@ curl -X DELETE http://localhost:5000/posts/{sampleId}
 curl -X PATCH http://localhost:5000/posts/{sampleId}
 
 # Submit contact form (FormBody extraction)
-curl -X POST http://localhost:5000/contact -d "Name=Alice&Message=Hello" """ ] ]
+curl -X POST http://localhost:5000/contact -d "Name=Alice&Message=Hello" """
+                ]
+        ]
     |> Response.ofHtml
 
 // =============================================================================
@@ -247,9 +273,11 @@ let handleRoute (route: Route) : HttpHandler =
 let endpoints = Route.endpoints endpointConfig handleRoute
 
 let authEndpoints =
-    [ get "/login" Handlers.loginPage
-      post "/login" Handlers.loginSubmit
-      post "/logout" Handlers.logoutSubmit ]
+    [
+        get "/login" Handlers.loginPage
+        post "/login" Handlers.loginSubmit
+        post "/logout" Handlers.logoutSubmit
+    ]
 
 [<EntryPoint>]
 let main args =
