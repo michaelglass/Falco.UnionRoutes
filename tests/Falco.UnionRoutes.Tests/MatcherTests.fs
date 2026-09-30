@@ -61,7 +61,7 @@ type PreconditionMatchRoute =
 
 let testGuid = Guid.Parse("550e8400-e29b-41d4-a716-446655440000")
 
-let matcher = Route.createMatcher<MatcherTestRoute> ()
+let matcher = Route.createMatcher<MatcherTestRoute>()
 
 [<Fact>]
 let ``matches exact path`` () =
@@ -127,7 +127,7 @@ let ``matches GET list route`` () =
 // Convention-based route matching
 // =============================================================================
 
-let conventionMatcher = Route.createMatcher<ConventionParent> ()
+let conventionMatcher = Route.createMatcher<ConventionParent>()
 
 [<Fact>]
 let ``matches convention Root`` () =
@@ -165,7 +165,7 @@ let ``empty URL matches root`` () =
 // HttpMethod.Any
 // =============================================================================
 
-let anyMatcher = Route.createMatcher<AnyMethodRoute> ()
+let anyMatcher = Route.createMatcher<AnyMethodRoute>()
 
 [<Fact>]
 let ``Any method route matches GET`` () =
@@ -187,7 +187,7 @@ let ``specific method still enforced for non-Any routes`` () =
 // Multiple parameters
 // =============================================================================
 
-let multiMatcher = Route.createMatcher<MultiParamRoute> ()
+let multiMatcher = Route.createMatcher<MultiParamRoute>()
 
 [<Fact>]
 let ``matches route with multiple Guid parameters`` () =
@@ -213,7 +213,7 @@ let ``returns ParameterError for invalid second parameter`` () =
 // Type variety (int64, bool, string params)
 // =============================================================================
 
-let typeMatcher = Route.createMatcher<TypeVarietyRoute> ()
+let typeMatcher = Route.createMatcher<TypeVarietyRoute>()
 
 [<Fact>]
 let ``matches int64 parameter`` () =
@@ -250,7 +250,7 @@ let ``returns ParameterError for invalid int`` () =
 // Routes with preconditions (non-route fields preserved as defaults)
 // =============================================================================
 
-let preconditionMatcher = Route.createMatcher<PreconditionMatchRoute> ()
+let preconditionMatcher = Route.createMatcher<PreconditionMatchRoute>()
 
 [<Fact>]
 let ``matches route with precondition field`` () =

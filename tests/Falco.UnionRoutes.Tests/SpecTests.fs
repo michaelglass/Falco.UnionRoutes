@@ -79,9 +79,11 @@ type MixedRoute =
     | Search of query: QueryParam<string> * page: QueryParam<int> option
 
 type FloatRecord =
-    { Score: float
-      Rating: float32
-      Price: decimal }
+    {
+        Score: float
+        Rating: float32
+        Price: decimal
+    }
 
 type FloatFieldRoute = Create of JsonBody<FloatRecord>
 
@@ -110,9 +112,11 @@ type AnyRoute = | [<Route(RouteMethod.Any)>] Catch
 // =============================================================================
 
 let defaultConfig: OpenApiConfig =
-    { Title = "Test API"
-      Version = "1.0.0"
-      Description = None }
+    {
+        Title = "Test API"
+        Version = "1.0.0"
+        Description = None
+    }
 
 let parse (json: string) : JsonObject = JsonNode.Parse(json) :?> JsonObject
 
@@ -125,7 +129,7 @@ let generateAndParse<'T> () : JsonObject =
 
 [<Fact>]
 let ``generates valid OpenAPI 3.0 structure`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     test <@ doc["openapi"].GetValue<string>() = "3.0.0" @>
     test <@ doc["info"].["title"].GetValue<string>() = "Test API" @>
     test <@ doc["info"].["version"].GetValue<string>() = "1.0.0" @>
@@ -134,16 +138,18 @@ let ``generates valid OpenAPI 3.0 structure`` () =
 [<Fact>]
 let ``includes description when provided`` () =
     let config =
-        { Title = "Test"
-          Version = "1.0"
-          Description = Some "A test API" }
+        {
+            Title = "Test"
+            Version = "1.0"
+            Description = Some "A test API"
+        }
 
     let doc = Spec.generate<SimpleRoute> config |> parse
     test <@ doc["info"].["description"].GetValue<string>() = "A test API" @>
 
 [<Fact>]
 let ``omits description when None`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     test <@ isNull doc["info"].["description"] @>
 
 // =============================================================================
@@ -152,7 +158,7 @@ let ``omits description when None`` () =
 
 [<Fact>]
 let ``maps Root to GET /`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     let paths = doc["paths"] :?> JsonObject
     test <@ not (isNull paths["/"]) @>
     let rootPath = paths["/"] :?> JsonObject
@@ -160,27 +166,27 @@ let ``maps Root to GET /`` () =
 
 [<Fact>]
 let ``maps Show of id: Guid to GET /{id}`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     let paths = doc["paths"] :?> JsonObject
     test <@ not (isNull paths["/{id}"]) @>
 
 [<Fact>]
 let ``infers POST method for Create`` () =
-    let doc = generateAndParse<MethodRoute> ()
+    let doc = generateAndParse<MethodRoute>()
     let paths = doc["paths"] :?> JsonObject
     let rootPath = paths["/"] :?> JsonObject
     test <@ not (isNull rootPath["post"]) @>
 
 [<Fact>]
 let ``infers DELETE method for Delete`` () =
-    let doc = generateAndParse<MethodRoute> ()
+    let doc = generateAndParse<MethodRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     test <@ not (isNull idPath["delete"]) @>
 
 [<Fact>]
 let ``infers PATCH method for Patch`` () =
-    let doc = generateAndParse<MethodRoute> ()
+    let doc = generateAndParse<MethodRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     test <@ not (isNull idPath["patch"]) @>
@@ -191,7 +197,7 @@ let ``infers PATCH method for Patch`` () =
 
 [<Fact>]
 let ``Guid path param has uuid format`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     let getOp = idPath["get"] :?> JsonObject
@@ -205,7 +211,7 @@ let ``Guid path param has uuid format`` () =
 
 [<Fact>]
 let ``int path param has int32 format`` () =
-    let doc = generateAndParse<IntParamRoute> ()
+    let doc = generateAndParse<IntParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Show of page: int -> /{page} (Show is a special name, param-only path)
     let pagePath = paths["/{page}"] :?> JsonObject
@@ -217,7 +223,7 @@ let ``int path param has int32 format`` () =
 
 [<Fact>]
 let ``int64 path param has int64 format`` () =
-    let doc = generateAndParse<Int64ParamRoute> ()
+    let doc = generateAndParse<Int64ParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     let getOp = idPath["get"] :?> JsonObject
@@ -228,7 +234,7 @@ let ``int64 path param has int64 format`` () =
 
 [<Fact>]
 let ``bool path param has boolean type`` () =
-    let doc = generateAndParse<BoolParamRoute> ()
+    let doc = generateAndParse<BoolParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     let enabledPath = paths["/{enabled}"] :?> JsonObject
     let getOp = enabledPath["get"] :?> JsonObject
@@ -238,7 +244,7 @@ let ``bool path param has boolean type`` () =
 
 [<Fact>]
 let ``string path param has string type`` () =
-    let doc = generateAndParse<StringParamRoute> ()
+    let doc = generateAndParse<StringParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     let slugPath = paths["/{slug}"] :?> JsonObject
     let getOp = slugPath["get"] :?> JsonObject
@@ -248,7 +254,7 @@ let ``string path param has string type`` () =
 
 [<Fact>]
 let ``single-case DU wrapper unwraps to inner type in path param`` () =
-    let doc = generateAndParse<WrappedIdRoute> ()
+    let doc = generateAndParse<WrappedIdRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     let getOp = idPath["get"] :?> JsonObject
@@ -265,13 +271,13 @@ let ``single-case DU wrapper unwraps to inner type in path param`` () =
 [<Fact>]
 let ``strips type constraints from paths`` () =
     // SimpleRoute.Show produces path /{id:guid} - should be stripped to /{id}
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     let paths = doc["paths"] :?> JsonObject
     test <@ not (isNull paths["/{id}"]) @>
 
 [<Fact>]
 let ``strips int constraints from paths`` () =
-    let doc = generateAndParse<IntParamRoute> ()
+    let doc = generateAndParse<IntParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Show of page: int -> /{page:int} stripped to /{page}
     test <@ not (isNull paths["/{page}"]) @>
@@ -282,7 +288,7 @@ let ``strips int constraints from paths`` () =
 
 [<Fact>]
 let ``required query param is marked required`` () =
-    let doc = generateAndParse<QueryParamRoute> ()
+    let doc = generateAndParse<QueryParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     let searchPath = paths["/search"] :?> JsonObject
     let getOp = searchPath["get"] :?> JsonObject
@@ -295,7 +301,7 @@ let ``required query param is marked required`` () =
 
 [<Fact>]
 let ``optional query param is not required`` () =
-    let doc = generateAndParse<QueryParamRoute> ()
+    let doc = generateAndParse<QueryParamRoute>()
     let paths = doc["paths"] :?> JsonObject
     let paginatedPath = paths["/paginated"] :?> JsonObject
     let getOp = paginatedPath["get"] :?> JsonObject
@@ -312,7 +318,7 @@ let ``optional query param is not required`` () =
 
 [<Fact>]
 let ``JsonBody produces application/json request body`` () =
-    let doc = generateAndParse<JsonBodyRoute> ()
+    let doc = generateAndParse<JsonBodyRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Create -> POST /
     let createPath = paths["/"] :?> JsonObject
@@ -324,7 +330,7 @@ let ``JsonBody produces application/json request body`` () =
 
 [<Fact>]
 let ``FormBody produces application/x-www-form-urlencoded request body`` () =
-    let doc = generateAndParse<FormBodyRoute> ()
+    let doc = generateAndParse<FormBodyRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Submit is not a special name -> /submit, method GET
     let submitPath = paths["/submit"] :?> JsonObject
@@ -340,7 +346,7 @@ let ``FormBody produces application/x-www-form-urlencoded request body`` () =
 
 [<Fact>]
 let ``Returns produces response schema`` () =
-    let doc = generateAndParse<ReturnsRoute> ()
+    let doc = generateAndParse<ReturnsRoute>()
     let paths = doc["paths"] :?> JsonObject
     // List -> GET /
     let listPath = paths["/"] :?> JsonObject
@@ -353,7 +359,7 @@ let ``Returns produces response schema`` () =
 
 [<Fact>]
 let ``Returns Fortune list produces array schema`` () =
-    let doc = generateAndParse<ReturnsRoute> ()
+    let doc = generateAndParse<ReturnsRoute>()
     let paths = doc["paths"] :?> JsonObject
     let listPath = paths["/"] :?> JsonObject
     let getOp = listPath["get"] :?> JsonObject
@@ -365,7 +371,7 @@ let ``Returns Fortune list produces array schema`` () =
 
 [<Fact>]
 let ``Returns Fortune produces ref to Fortune schema`` () =
-    let doc = generateAndParse<ReturnsRoute> ()
+    let doc = generateAndParse<ReturnsRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Show of id: Guid * Returns<Fortune> -> GET /{id}
     let showPath = paths["/{id}"] :?> JsonObject
@@ -382,7 +388,7 @@ let ``Returns Fortune produces ref to Fortune schema`` () =
 
 [<Fact>]
 let ``record types produce components/schemas entries`` () =
-    let doc = generateAndParse<ReturnsRoute> ()
+    let doc = generateAndParse<ReturnsRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     test <@ not (isNull schemas["Fortune"]) @>
     let fortune = schemas["Fortune"] :?> JsonObject
@@ -393,7 +399,7 @@ let ``record types produce components/schemas entries`` () =
 
 [<Fact>]
 let ``record with optional field omits it from required`` () =
-    let doc = generateAndParse<OptionalFieldRoute> ()
+    let doc = generateAndParse<OptionalFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["OptionalFieldRecord"] :?> JsonObject
     let required = record["required"] :?> JsonArray
@@ -407,7 +413,7 @@ let ``record with optional field omits it from required`` () =
 
 [<Fact>]
 let ``nested routes produce correct paths`` () =
-    let doc = generateAndParse<NestedParentRoute> ()
+    let doc = generateAndParse<NestedParentRoute>()
     let paths = doc["paths"] :?> JsonObject
     // List -> GET /
     test <@ not (isNull paths["/"]) @>
@@ -418,7 +424,7 @@ let ``nested routes produce correct paths`` () =
 
 [<Fact>]
 let ``nested routes inherit correct methods`` () =
-    let doc = generateAndParse<NestedParentRoute> ()
+    let doc = generateAndParse<NestedParentRoute>()
     let paths = doc["paths"] :?> JsonObject
     let idPath = paths["/{id}"] :?> JsonObject
     // Delete produces DELETE method
@@ -430,7 +436,7 @@ let ``nested routes inherit correct methods`` () =
 
 [<Fact>]
 let ``precondition fields are excluded from parameters`` () =
-    let doc = generateAndParse<PreconditionRoute> ()
+    let doc = generateAndParse<PreconditionRoute>()
     let paths = doc["paths"] :?> JsonObject
     let privatePath = paths["/private"] :?> JsonObject
     let getOp = privatePath["get"] :?> JsonObject
@@ -439,7 +445,7 @@ let ``precondition fields are excluded from parameters`` () =
 
 [<Fact>]
 let ``overridable precondition fields are excluded from parameters`` () =
-    let doc = generateAndParse<PreconditionRoute> ()
+    let doc = generateAndParse<PreconditionRoute>()
     let paths = doc["paths"] :?> JsonObject
     let overridablePath = paths["/overridable"] :?> JsonObject
     let getOp = overridablePath["get"] :?> JsonObject
@@ -451,7 +457,7 @@ let ``overridable precondition fields are excluded from parameters`` () =
 
 [<Fact>]
 let ``list type produces array schema`` () =
-    let doc = generateAndParse<ArrayRoute> ()
+    let doc = generateAndParse<ArrayRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["ArrayFieldRecord"] :?> JsonObject
     let tags = record["properties"].["Tags"] :?> JsonObject
@@ -464,7 +470,7 @@ let ``list type produces array schema`` () =
 
 [<Fact>]
 let ``mixed route with path param and Returns has both`` () =
-    let doc = generateAndParse<MixedRoute> ()
+    let doc = generateAndParse<MixedRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Show of id: Guid * Returns<PostInput> -> GET /{id}
     let showPath = paths["/{id}"] :?> JsonObject
@@ -477,7 +483,7 @@ let ``mixed route with path param and Returns has both`` () =
 
 [<Fact>]
 let ``mixed route with body and precondition has body but no precondition param`` () =
-    let doc = generateAndParse<MixedRoute> ()
+    let doc = generateAndParse<MixedRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Create of JsonBody<PostInput> * PreCondition<Guid> -> POST /
     let createPath = paths["/"] :?> JsonObject
@@ -487,7 +493,7 @@ let ``mixed route with body and precondition has body but no precondition param`
 
 [<Fact>]
 let ``mixed route with query params has correct parameter list`` () =
-    let doc = generateAndParse<MixedRoute> ()
+    let doc = generateAndParse<MixedRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Search of query: QueryParam<string> * page: QueryParam<int> option -> GET /search
     let searchPath = paths["/search"] :?> JsonObject
@@ -496,9 +502,11 @@ let ``mixed route with query params has correct parameter list`` () =
     test <@ parameters.Count = 2 @>
 
     let paramNames =
-        [ for p in parameters do
-              let obj = p :?> JsonObject
-              yield obj["name"].GetValue<string>() ]
+        [
+            for p in parameters do
+                let obj = p :?> JsonObject
+                yield obj["name"].GetValue<string>()
+        ]
 
     test <@ paramNames |> List.contains "query" @>
     test <@ paramNames |> List.contains "page" @>
@@ -509,7 +517,7 @@ let ``mixed route with query params has correct parameter list`` () =
 
 [<Fact>]
 let ``omits components when no record types used`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     test <@ isNull doc["components"] @>
 
 // =============================================================================
@@ -518,7 +526,7 @@ let ``omits components when no record types used`` () =
 
 [<Fact>]
 let ``routes without Returns have simple 200 response`` () =
-    let doc = generateAndParse<SimpleRoute> ()
+    let doc = generateAndParse<SimpleRoute>()
     let paths = doc["paths"] :?> JsonObject
     let rootPath = paths["/"] :?> JsonObject
     let getOp = rootPath["get"] :?> JsonObject
@@ -533,7 +541,7 @@ let ``routes without Returns have simple 200 response`` () =
 
 [<Fact>]
 let ``float field produces number/double schema`` () =
-    let doc = generateAndParse<FloatFieldRoute> ()
+    let doc = generateAndParse<FloatFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["FloatRecord"] :?> JsonObject
     let score = record["properties"].["Score"] :?> JsonObject
@@ -542,7 +550,7 @@ let ``float field produces number/double schema`` () =
 
 [<Fact>]
 let ``float32 field produces number/float schema`` () =
-    let doc = generateAndParse<FloatFieldRoute> ()
+    let doc = generateAndParse<FloatFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["FloatRecord"] :?> JsonObject
     let rating = record["properties"].["Rating"] :?> JsonObject
@@ -551,7 +559,7 @@ let ``float32 field produces number/float schema`` () =
 
 [<Fact>]
 let ``decimal field produces number/decimal schema`` () =
-    let doc = generateAndParse<FloatFieldRoute> ()
+    let doc = generateAndParse<FloatFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["FloatRecord"] :?> JsonObject
     let price = record["properties"].["Price"] :?> JsonObject
@@ -564,7 +572,7 @@ let ``decimal field produces number/decimal schema`` () =
 
 [<Fact>]
 let ``native array field produces array schema`` () =
-    let doc = generateAndParse<ArrayFieldRoute> ()
+    let doc = generateAndParse<ArrayFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["ArrayRecord"] :?> JsonObject
     let items = record["properties"].["Items"] :?> JsonObject
@@ -577,7 +585,7 @@ let ``native array field produces array schema`` () =
 
 [<Fact>]
 let ``option field in response record produces nullable schema`` () =
-    let doc = generateAndParse<NullableResponseRoute> ()
+    let doc = generateAndParse<NullableResponseRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["NullableResponse"] :?> JsonObject
     let value = record["properties"].["Value"] :?> JsonObject
@@ -585,7 +593,7 @@ let ``option field in response record produces nullable schema`` () =
 
 [<Fact>]
 let ``option inside list produces nullable items`` () =
-    let doc = generateAndParse<OptionListRoute> ()
+    let doc = generateAndParse<OptionListRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["OptionListRecord"] :?> JsonObject
     let items = record["properties"].["Items"] :?> JsonObject
@@ -600,7 +608,7 @@ let ``option inside list produces nullable items`` () =
 
 [<Fact>]
 let ``unknown type falls back to object schema`` () =
-    let doc = generateAndParse<DateFieldRoute> ()
+    let doc = generateAndParse<DateFieldRoute>()
     let schemas = doc["components"].["schemas"] :?> JsonObject
     let record = schemas["DateRecord"] :?> JsonObject
     let createdAt = record["properties"].["CreatedAt"] :?> JsonObject
@@ -612,7 +620,7 @@ let ``unknown type falls back to object schema`` () =
 
 [<Fact>]
 let ``Put method route produces put operation`` () =
-    let doc = generateAndParse<PutRoute> ()
+    let doc = generateAndParse<PutRoute>()
     let paths = doc["paths"] :?> JsonObject
     // Update is not a special name, so path is /update/{id}
     let updatePath = paths["/update/{id}"] :?> JsonObject
@@ -620,7 +628,7 @@ let ``Put method route produces put operation`` () =
 
 [<Fact>]
 let ``Any method route produces get operation`` () =
-    let doc = generateAndParse<AnyRoute> ()
+    let doc = generateAndParse<AnyRoute>()
     let paths = doc["paths"] :?> JsonObject
     let rootPath = paths["/catch"] :?> JsonObject
     test <@ not (isNull rootPath["get"]) @>

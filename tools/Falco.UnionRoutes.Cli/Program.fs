@@ -12,13 +12,15 @@ open Microsoft.FSharp.Reflection
 // =============================================================================
 
 type CliArgs =
-    { FsprojPath: string
-      RouteTypeName: string option
-      Title: string option
-      Version: string
-      Description: string option
-      OutputPath: string option
-      NoBuild: bool }
+    {
+        FsprojPath: string
+        RouteTypeName: string option
+        Title: string option
+        Version: string
+        Description: string option
+        OutputPath: string option
+        NoBuild: bool
+    }
 
 let printUsage () =
     eprintfn "Usage: falco-routes <fsproj-path> [route-type-name] [options]"
@@ -86,13 +88,15 @@ let parseArgs (argv: string array) =
         eprintfn "Error: fsproj path is required"
         exit 1
     | Some path ->
-        { FsprojPath = path
-          RouteTypeName = routeTypeName
-          Title = title
-          Version = version
-          Description = description
-          OutputPath = outputPath
-          NoBuild = noBuild }
+        {
+            FsprojPath = path
+            RouteTypeName = routeTypeName
+            Title = title
+            Version = version
+            Description = description
+            OutputPath = outputPath
+            NoBuild = noBuild
+        }
 
 // =============================================================================
 // Process execution
@@ -190,12 +194,14 @@ let private isUnionType (t: Type) =
 
 let private markerTypeDefs =
     System.Collections.Generic.HashSet<Type>(
-        [| typedefof<QueryParam<_>>
-           typedefof<PreCondition<_>>
-           typedefof<OverridablePreCondition<_>>
-           typedefof<JsonBody<_>>
-           typedefof<FormBody<_>>
-           typedefof<Returns<_>> |]
+        [|
+            typedefof<QueryParam<_>>
+            typedefof<PreCondition<_>>
+            typedefof<OverridablePreCondition<_>>
+            typedefof<JsonBody<_>>
+            typedefof<FormBody<_>>
+            typedefof<Returns<_>>
+        |]
     )
 
 let private isMarkerType (t: Type) =
@@ -292,9 +298,11 @@ let resolveRouteType (asm: Assembly) (explicitName: string option) =
 
 let generateSpec (routeType: Type) (title: string) (version: string) (description: string option) =
     let config: OpenApiConfig =
-        { Title = title
-          Version = version
-          Description = description }
+        {
+            Title = title
+            Version = version
+            Description = description
+        }
 
     let specModule = typeof<OpenApiConfig>.Assembly.GetType("Falco.UnionRoutes.Spec")
 

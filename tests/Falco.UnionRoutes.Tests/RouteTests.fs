@@ -147,19 +147,19 @@ let ``Nested route inherits method from leaf`` () =
 
 [<Fact>]
 let ``allRoutes enumerates all route cases`` () =
-    let routes = Route.allRoutes<PostRoute> ()
+    let routes = Route.allRoutes<PostRoute>()
     test <@ List.length routes = 5 @>
 
 [<Fact>]
 let ``allRoutes enumerates nested routes`` () =
-    let routes = Route.allRoutes<TestRoute> ()
+    let routes = Route.allRoutes<TestRoute>()
     // TestRoute has: Api (containing Posts + Users), Health, Home
     // Posts: 5 cases, Users: 2 cases = 7 from Api + 2 top-level = 9 total
     test <@ List.length routes = 9 @>
 
 [<Fact>]
 let ``allRoutes uses default values for parameters`` () =
-    let routes = Route.allRoutes<PostRoute> ()
+    let routes = Route.allRoutes<PostRoute>()
 
     let detailRoute =
         routes
@@ -180,7 +180,7 @@ let ``allRoutes uses default values for parameters`` () =
 
 [<Fact>]
 let ``All enumerated routes have valid RouteInfo`` () =
-    let routes = Route.allRoutes<TestRoute> ()
+    let routes = Route.allRoutes<TestRoute>()
 
     for route in routes do
         let info = Route.info route
@@ -192,19 +192,22 @@ let ``All enumerated routes have valid RouteInfo`` () =
 
 [<Fact>]
 let ``enumerate yields every leaf case symbol with its route info`` () =
-    let entries = Route.enumerate<PostRoute> ()
+    let entries = Route.enumerate<PostRoute>()
     test <@ List.length entries = 5 @>
 
     let symbols = entries |> List.map fst |> Set.ofList
 
     test
         <@
-            symbols = set
-                [ "PostRoute.List"
-                  "PostRoute.Detail"
-                  "PostRoute.Create"
-                  "PostRoute.Update"
-                  "PostRoute.Delete" ]
+            symbols =
+                set
+                    [
+                        "PostRoute.List"
+                        "PostRoute.Detail"
+                        "PostRoute.Create"
+                        "PostRoute.Update"
+                        "PostRoute.Delete"
+                    ]
         @>
 
     let listInfo = entries |> List.find (fun (s, _) -> s = "PostRoute.List") |> snd
@@ -212,7 +215,7 @@ let ``enumerate yields every leaf case symbol with its route info`` () =
 
 [<Fact>]
 let ``enumerate spells a nested leaf by its own declaring union, not the root`` () =
-    let entries = Route.enumerate<TestRoute> ()
+    let entries = Route.enumerate<TestRoute>()
     let symbols = entries |> List.map fst |> Set.ofList
     test <@ List.length entries = 9 @>
     test <@ symbols |> Set.contains "PostRoute.List" @>
@@ -222,14 +225,14 @@ let ``enumerate spells a nested leaf by its own declaring union, not the root`` 
 
 [<Fact>]
 let ``enumerate path carries the canonical Route.info path including inferred constraints`` () =
-    let entries = Route.enumerate<PostRoute> ()
+    let entries = Route.enumerate<PostRoute>()
     let detailPath = entries |> List.find (fun (s, _) -> s = "PostRoute.Detail") |> snd
     test <@ detailPath.Path = (Route.info (PostRoute.Detail Guid.Empty)).Path @>
     test <@ detailPath.Path.Contains "{id" @>
 
 [<Fact>]
 let ``enumerateType matches the generic enumerate`` () =
-    test <@ Route.enumerateType typeof<PostRoute> = Route.enumerate<PostRoute> () @>
+    test <@ Route.enumerateType typeof<PostRoute> = Route.enumerate<PostRoute>() @>
 
 // =============================================================================
 // link function tests
@@ -363,11 +366,13 @@ let ``endpoints generates HttpEndpoint list from handler`` () =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = []
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = []
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 2 @>
@@ -403,7 +408,7 @@ type RouteWithInt64Param = Int64Route of bigNum: int64
 
 [<Fact>]
 let ``allRoutes uses empty string default for string params`` () =
-    let routes = Route.allRoutes<RouteWithStringParam> ()
+    let routes = Route.allRoutes<RouteWithStringParam>()
 
     match routes with
     | [ StringRoute name ] -> test <@ name = "" @>
@@ -411,7 +416,7 @@ let ``allRoutes uses empty string default for string params`` () =
 
 [<Fact>]
 let ``allRoutes uses zero default for int params`` () =
-    let routes = Route.allRoutes<RouteWithIntParam> ()
+    let routes = Route.allRoutes<RouteWithIntParam>()
 
     match routes with
     | [ IntRoute count ] -> test <@ count = 0 @>
@@ -419,7 +424,7 @@ let ``allRoutes uses zero default for int params`` () =
 
 [<Fact>]
 let ``allRoutes uses zero default for int64 params`` () =
-    let routes = Route.allRoutes<RouteWithInt64Param> ()
+    let routes = Route.allRoutes<RouteWithInt64Param>()
 
     match routes with
     | [ Int64Route bigNum ] -> test <@ bigNum = 0L @>
@@ -507,7 +512,7 @@ let ``Nested route with params link substitutes values`` () =
 
 [<Fact>]
 let ``Nested route with params enumerates all routes`` () =
-    let routes = Route.allRoutes<NestedParentRoute> ()
+    let routes = Route.allRoutes<NestedParentRoute>()
     // Users has 2 children (Items, Profile), Items has 2 (List, Show), Profile has 2 (View, Edit)
     // Total: 4 routes
     test <@ List.length routes = 4 @>
@@ -536,7 +541,7 @@ type MultiSingleCasePreConditionRoutes =
 
 [<Fact>]
 let ``Issue #1 - Single-case route with PreCondition should enumerate correctly`` () =
-    let routes = Route.allRoutes<SingleCasePreConditionRoute> ()
+    let routes = Route.allRoutes<SingleCasePreConditionRoute>()
     test <@ List.length routes = 1 @>
 
 [<Fact>]
@@ -549,12 +554,12 @@ let ``Issue #1 - Single-case route with PreCondition should have correct path`` 
 
 [<Fact>]
 let ``Issue #1 - Multiple single-case PreCondition routes should all enumerate`` () =
-    let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes> ()
+    let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes>()
     test <@ List.length routes = 3 @>
 
 [<Fact>]
 let ``Issue #1 - Multiple single-case PreCondition routes should have distinct paths`` () =
-    let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes> ()
+    let routes = Route.allRoutes<MultiSingleCasePreConditionRoutes>()
 
     let paths = routes |> List.map (Route.info >> (fun i -> i.Path))
     test <@ List.distinct paths |> List.length = 3 @>
@@ -574,12 +579,12 @@ type ValidRoute =
 
 [<Fact>]
 let ``validateStructure returns Ok for valid routes`` () =
-    let result = Route.validateStructure<ValidRoute> ()
+    let result = Route.validateStructure<ValidRoute>()
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validateStructure returns Ok for nested routes`` () =
-    let result = Route.validateStructure<TestRoute> ()
+    let result = Route.validateStructure<TestRoute>()
     test <@ result = Ok() @>
 
 /// Route with invalid characters in path
@@ -587,7 +592,7 @@ type InvalidCharsRoute = | [<Route(Path = "hello world")>] WithSpace
 
 [<Fact>]
 let ``validateStructure catches invalid path characters`` () =
-    let result = Route.validateStructure<InvalidCharsRoute> ()
+    let result = Route.validateStructure<InvalidCharsRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Invalid characters")) @>
@@ -600,7 +605,7 @@ type UnbalancedBracesRoute =
 
 [<Fact>]
 let ``validateStructure catches unbalanced braces`` () =
-    let result = Route.validateStructure<UnbalancedBracesRoute> ()
+    let result = Route.validateStructure<UnbalancedBracesRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Unbalanced braces")) @>
@@ -611,7 +616,7 @@ type DuplicateParamsRoute = | [<Route(Path = "{id}/sub/{id}")>] Duplicate of id:
 
 [<Fact>]
 let ``validateStructure catches duplicate path params`` () =
-    let result = Route.validateStructure<DuplicateParamsRoute> ()
+    let result = Route.validateStructure<DuplicateParamsRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate path parameters")) @>
@@ -622,7 +627,7 @@ type MismatchedParamRoute = | [<Route(Path = "{userId}")>] Profile of id: Guid
 
 [<Fact>]
 let ``validateStructure catches path param not matching field name`` () =
-    let result = Route.validateStructure<MismatchedParamRoute> ()
+    let result = Route.validateStructure<MismatchedParamRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("not found in fields")) @>
@@ -637,7 +642,7 @@ type MultipleNestedRoute = Both of ChildRouteA * ChildRouteB
 
 [<Fact>]
 let ``validateStructure catches multiple nested route unions`` () =
-    let result = Route.validateStructure<MultipleNestedRoute> ()
+    let result = Route.validateStructure<MultipleNestedRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route unions")) @>
@@ -657,7 +662,7 @@ type UnsupportedWrapperRoute2 = AtTime of at: Stamp
 
 [<Fact>]
 let ``validateStructure rejects single-case wrapper of unsupported primitive`` () =
-    let result = Route.validateStructure<UnsupportedWrapperRoute> ()
+    let result = Route.validateStructure<UnsupportedWrapperRoute>()
 
     match result with
     | Error errors ->
@@ -667,7 +672,7 @@ let ``validateStructure rejects single-case wrapper of unsupported primitive`` (
 
 [<Fact>]
 let ``validateStructure rejects single-case wrapper of DateTimeOffset`` () =
-    let result = Route.validateStructure<UnsupportedWrapperRoute2> ()
+    let result = Route.validateStructure<UnsupportedWrapperRoute2>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("AtTime") && e.Contains("Stamp")) @>
@@ -675,7 +680,7 @@ let ``validateStructure rejects single-case wrapper of DateTimeOffset`` () =
 
 [<Fact>]
 let ``validateStructure error names supported wrapper types`` () =
-    match Route.validateStructure<UnsupportedWrapperRoute> () with
+    match Route.validateStructure<UnsupportedWrapperRoute>() with
     | Error errors ->
         let combined = String.concat " " errors
 
@@ -810,7 +815,7 @@ let ``RESTful nested routes - delete post`` () =
 
 [<Fact>]
 let ``RESTful nested routes - enumerates all routes`` () =
-    let routes = Route.allRoutes<RestfulUserRoute> ()
+    let routes = Route.allRoutes<RestfulUserRoute>()
     // User: List + Create + Member * (Show + Edit + Delete + Patch + Posts * (List + Create + Member * (Show + Edit + Delete + Patch)))
     // = 2 + (4 + (2 + 4)) = 12
     test <@ List.length routes = 12 @>
@@ -882,7 +887,7 @@ type DuplicateParamNameRoute =
 
 [<Fact>]
 let ``validateUniqueness detects duplicate paths with different param names`` () =
-    let result = Route.validateUniqueness<DuplicateParamNameRoute> ()
+    let result = Route.validateUniqueness<DuplicateParamNameRoute>()
 
     match result with
     | Error errors ->
@@ -897,7 +902,7 @@ type DifferentMethodRoute =
 
 [<Fact>]
 let ``validateUniqueness allows same path with different methods`` () =
-    let result = Route.validateUniqueness<DifferentMethodRoute> ()
+    let result = Route.validateUniqueness<DifferentMethodRoute>()
     test <@ result = Ok() @>
 
 /// Convention-based duplicates: Root and List both resolve to GET /
@@ -907,7 +912,7 @@ type ConventionDuplicateRoute =
 
 [<Fact>]
 let ``validateUniqueness detects convention-based duplicates`` () =
-    let result = Route.validateUniqueness<ConventionDuplicateRoute> ()
+    let result = Route.validateUniqueness<ConventionDuplicateRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate route")) @>
@@ -920,7 +925,7 @@ type AmbiguousRoute =
 
 [<Fact>]
 let ``validateUniqueness detects ambiguous routes`` () =
-    let result = Route.validateUniqueness<AmbiguousRoute> ()
+    let result = Route.validateUniqueness<AmbiguousRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Ambiguous routes")) @>
@@ -935,7 +940,7 @@ type NestedDupParent =
 
 [<Fact>]
 let ``validateUniqueness detects nested route duplicates`` () =
-    let result = Route.validateUniqueness<NestedDupParent> ()
+    let result = Route.validateUniqueness<NestedDupParent>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("Duplicate route")) @>
@@ -943,7 +948,7 @@ let ``validateUniqueness detects nested route duplicates`` () =
 
 [<Fact>]
 let ``validateUniqueness returns Ok for valid unique routes`` () =
-    let result = Route.validateUniqueness<PostRoute> ()
+    let result = Route.validateUniqueness<PostRoute>()
     test <@ result = Ok() @>
 
 /// Validate catches uniqueness errors in the combined validate function
@@ -970,16 +975,18 @@ let ``endpoints sorts more specific routes before less specific`` () =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = []
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = []
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 2 @>
     // Falco HttpEndpoint doesn't expose its path, so ordering is checked via route info.
-    let routes = Route.allRoutes<SpecificityRoute> ()
+    let routes = Route.allRoutes<SpecificityRoute>()
 
     let infos =
         routes
@@ -1161,17 +1168,17 @@ let ``explicit path - link generation works with user-provided constraints`` () 
 
 [<Fact>]
 let ``validateStructure passes for constrained routes`` () =
-    let result = Route.validateStructure<MinMaxLengthRoute> ()
+    let result = Route.validateStructure<MinMaxLengthRoute>()
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validateStructure passes for implicit constraint routes`` () =
-    let result = Route.validateStructure<GuidParamRoute> ()
+    let result = Route.validateStructure<GuidParamRoute>()
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validateStructure passes for explicit path with manual constraints`` () =
-    let result = Route.validateStructure<ExplicitPathManualConstraints> ()
+    let result = Route.validateStructure<ExplicitPathManualConstraints>()
     test <@ result = Ok() @>
 
 // =============================================================================
@@ -1206,7 +1213,7 @@ let ``Returns field excluded from path with PreCondition`` () =
 
 [<Fact>]
 let ``allRoutes enumerates correctly with Returns fields`` () =
-    let routes = Route.allRoutes<ReturnsRoute> ()
+    let routes = Route.allRoutes<ReturnsRoute>()
     test <@ List.length routes = 4 @>
 
 [<Fact>]
@@ -1217,7 +1224,7 @@ let ``link generation ignores Returns field`` () =
 
 [<Fact>]
 let ``validateStructure passes for routes with Returns`` () =
-    let result = Route.validateStructure<ReturnsRoute> ()
+    let result = Route.validateStructure<ReturnsRoute>()
     test <@ result = Ok() @>
 
 type NestedReturnsChild =
@@ -1235,7 +1242,7 @@ let ``Returns works correctly in nested routes`` () =
 
 [<Fact>]
 let ``allRoutes enumerates nested routes with Returns`` () =
-    let routes = Route.allRoutes<NestedReturnsParent> ()
+    let routes = Route.allRoutes<NestedReturnsParent>()
     test <@ List.length routes = 2 @>
 
 // =============================================================================
@@ -1292,22 +1299,22 @@ let ``FormBody field excluded from path`` () =
 
 [<Fact>]
 let ``allRoutes enumerates correctly with JsonBody fields`` () =
-    let routes = Route.allRoutes<JsonBodyRoute> ()
+    let routes = Route.allRoutes<JsonBodyRoute>()
     test <@ List.length routes = 4 @>
 
 [<Fact>]
 let ``allRoutes enumerates correctly with FormBody fields`` () =
-    let routes = Route.allRoutes<FormBodyRoute> ()
+    let routes = Route.allRoutes<FormBodyRoute>()
     test <@ List.length routes = 2 @>
 
 [<Fact>]
 let ``validateStructure passes for routes with JsonBody`` () =
-    let result = Route.validateStructure<JsonBodyRoute> ()
+    let result = Route.validateStructure<JsonBodyRoute>()
     test <@ result = Ok() @>
 
 [<Fact>]
 let ``validateStructure passes for routes with FormBody`` () =
-    let result = Route.validateStructure<FormBodyRoute> ()
+    let result = Route.validateStructure<FormBodyRoute>()
     test <@ result = Ok() @>
 
 [<Fact>]
@@ -1325,7 +1332,7 @@ type InvalidMultiBodyRoute = Bad of JsonBody<PostInput> * FormBody<LoginInput>
 
 [<Fact>]
 let ``validateStructure rejects multiple body fields per case`` () =
-    let result = Route.validateStructure<InvalidMultiBodyRoute> ()
+    let result = Route.validateStructure<InvalidMultiBodyRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("body fields")) @>
@@ -1339,7 +1346,7 @@ type InvalidBodyWithNestedRoute = Bad of JsonBody<PostInput> * SomeChildRoute
 
 [<Fact>]
 let ``validateStructure rejects body field with nested route union`` () =
-    let result = Route.validateStructure<InvalidBodyWithNestedRoute> ()
+    let result = Route.validateStructure<InvalidBodyWithNestedRoute>()
 
     match result with
     | Error errors -> test <@ errors |> List.exists (fun e -> e.Contains("nested route union")) @>
@@ -1356,7 +1363,7 @@ type SpecificOverlapRoute =
 
 [<Fact>]
 let ``validateUniqueness allows overlapping routes when one is more specific`` () =
-    let result = Route.validateUniqueness<SpecificOverlapRoute> ()
+    let result = Route.validateUniqueness<SpecificOverlapRoute>()
     test <@ result = Ok() @>
 
 /// Single route has no pairs to compare (exercises empty for-loop branch)
@@ -1364,7 +1371,7 @@ type SingleCaseRoute = OnlyCase
 
 [<Fact>]
 let ``validateUniqueness passes for single-case route`` () =
-    let result = Route.validateUniqueness<SingleCaseRoute> ()
+    let result = Route.validateUniqueness<SingleCaseRoute>()
     test <@ result = Ok() @>
 
 // =============================================================================
@@ -1384,11 +1391,13 @@ let ``endpoints applies constrained parser constraints to route path`` () =
         Extractor.constrainedParser<ConstrainedSlug> [| RouteConstraint.Alpha |] (fun s -> Ok(ConstrainedSlug s))
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = [ slugParser ]
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = [ slugParser ]
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
@@ -1406,14 +1415,16 @@ let ``endpoints with unconstrained parser produces no suffix`` () =
     let handler (_route: UnconstrainedTagRoute) : Falco.HttpHandler =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
-    let tagParser = Extractor.parser<UnconstrainedTag> (fun s -> Ok(UnconstrainedTag s))
+    let tagParser = Extractor.parser<UnconstrainedTag>(fun s -> Ok(UnconstrainedTag s))
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = [ tagParser ]
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = [ tagParser ]
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     // This exercises the suffix = "" branch in applyParserConstraints
     let endpoints = Route.endpoints config handler
@@ -1433,11 +1444,13 @@ let ``endpoints with parser for unrelated type leaves path unchanged`` () =
         Extractor.constrainedParser<ConstrainedSlug> [| RouteConstraint.Alpha |] (fun s -> Ok(ConstrainedSlug s))
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = [ slugParser ]
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = [ slugParser ]
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
@@ -1479,11 +1492,13 @@ let ``endpoints throws on structural validation errors`` () =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = []
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = []
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let ex = Assert.Throws<exn>(fun () -> Route.endpoints config handler |> ignore)
     test <@ ex.Message.Contains("Route validation failed") @>
@@ -1494,11 +1509,13 @@ let ``endpoints throws on uniqueness validation errors`` () =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = []
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = []
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let ex = Assert.Throws<exn>(fun () -> Route.endpoints config handler |> ignore)
     test <@ ex.Message.Contains("Route validation failed") @>

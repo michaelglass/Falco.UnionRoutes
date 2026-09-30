@@ -408,20 +408,26 @@ module Extraction =
         /// <param name="extractor">Async function that extracts the value from HTTP context.</param>
         /// <returns>A list of PreconditionExtractors covering both PreCondition and OverridablePreCondition.</returns>
         let precondition<'T, 'E> (extractor: Extractor<'T, 'E>) : PreconditionExtractor<'E> list =
-            [ { ForType = typeof<PreCondition<'T>>
-                Extract =
-                  fun ctx ->
-                      task {
-                          let! result = extractor ctx
-                          return result |> Result.map (fun v -> box (PreCondition v))
-                      } }
-              { ForType = typeof<OverridablePreCondition<'T>>
-                Extract =
-                  fun ctx ->
-                      task {
-                          let! result = extractor ctx
-                          return result |> Result.map (fun v -> box (OverridablePreCondition v))
-                      } } ]
+            [
+                {
+                    ForType = typeof<PreCondition<'T>>
+                    Extract =
+                        fun ctx ->
+                            task {
+                                let! result = extractor ctx
+                                return result |> Result.map (fun v -> box (PreCondition v))
+                            }
+                }
+                {
+                    ForType = typeof<OverridablePreCondition<'T>>
+                    Extract =
+                        fun ctx ->
+                            task {
+                                let! result = extractor ctx
+                                return result |> Result.map (fun v -> box (OverridablePreCondition v))
+                            }
+                }
+            ]
 
         /// <summary>Registers a sync extractor for both <c>PreCondition&lt;'T&gt;</c> and
         /// <c>OverridablePreCondition&lt;'T&gt;</c> fields.
@@ -445,10 +451,12 @@ module Extraction =
         /// for typed input with implicit constraints.</para>
         /// </remarks>
         let parser<'T> (parser: Parser<'T>) : FieldParser =
-            { ForType = typeof<'T>
-              InputType = typeof<string>
-              Parse = fun o -> parser (o :?> string) |> Result.map box
-              ExplicitConstraints = [||] }
+            {
+                ForType = typeof<'T>
+                InputType = typeof<string>
+                Parse = fun o -> parser (o :?> string) |> Result.map box
+                ExplicitConstraints = [||]
+            }
 
         /// <summary>Registers a typed parser where the input type determines the implicit route constraint.</summary>
         /// <typeparam name="TInput">The input type (e.g., bool → :bool constraint, int → :int).</typeparam>
@@ -461,10 +469,12 @@ module Extraction =
         /// receives a <c>bool</c> value since the <c>:bool</c> constraint ensures only valid booleans reach the handler.</para>
         /// </remarks>
         let typedParser<'TInput, 'TOutput> (parser: 'TInput -> Result<'TOutput, string>) : FieldParser =
-            { ForType = typeof<'TOutput>
-              InputType = typeof<'TInput>
-              Parse = fun o -> parser (o :?> 'TInput) |> Result.map box
-              ExplicitConstraints = [||] }
+            {
+                ForType = typeof<'TOutput>
+                InputType = typeof<'TInput>
+                Parse = fun o -> parser (o :?> 'TInput) |> Result.map box
+                ExplicitConstraints = [||]
+            }
 
         /// <summary>Registers a string parser with explicit route constraints.</summary>
         /// <typeparam name="T">The output type this parser produces.</typeparam>
@@ -477,10 +487,12 @@ module Extraction =
         /// <c>:alpha</c> constraint so only alphabetic values reach the parser.</para>
         /// </remarks>
         let constrainedParser<'T> (constraints: RouteConstraint[]) (parser: Parser<'T>) : FieldParser =
-            { ForType = typeof<'T>
-              InputType = typeof<string>
-              Parse = fun o -> parser (o :?> string) |> Result.map box
-              ExplicitConstraints = constraints }
+            {
+                ForType = typeof<'T>
+                InputType = typeof<string>
+                Parse = fun o -> parser (o :?> string) |> Result.map box
+                ExplicitConstraints = constraints
+            }
 
     // =========================================================================
     // Extractor Execution (internal - used by Route.endpoints)

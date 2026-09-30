@@ -34,23 +34,25 @@ let private testGuid = Guid.Parse("550e8400-e29b-41d4-a716-446655440000")
 
 /// Representative route values whose path fields are fully reconstructible from the URL.
 let roundTripCases: obj[] list =
-    [ [| box Health |]
-      [| box (IntItem 42) |]
-      [| box (IntItem -7) |]
-      [| box (LongItem 9999999999L) |]
-      [| box (Flag true) |]
-      [| box (Flag false) |]
-      [| box (GuidItem testGuid) |]
-      [| box (SlugItem "hello-world") |]
-      // Special characters that MUST be percent-encoded to survive the round trip.
-      [| box (SlugItem "hello world") |]
-      [| box (SlugItem "a/b") |]
-      [| box (SlugItem "x?y#z") |]
-      [| box (SlugItem "100%") |]
-      [| box (SlugItem "a&b=c") |]
-      [| box (WrappedItem(ItemId testGuid)) |]
-      [| box (Nested(testGuid, Show)) |]
-      [| box (Nested(testGuid, Edit)) |] ]
+    [
+        [| box Health |]
+        [| box (IntItem 42) |]
+        [| box (IntItem -7) |]
+        [| box (LongItem 9999999999L) |]
+        [| box (Flag true) |]
+        [| box (Flag false) |]
+        [| box (GuidItem testGuid) |]
+        [| box (SlugItem "hello-world") |]
+        // Special characters that MUST be percent-encoded to survive the round trip.
+        [| box (SlugItem "hello world") |]
+        [| box (SlugItem "a/b") |]
+        [| box (SlugItem "x?y#z") |]
+        [| box (SlugItem "100%") |]
+        [| box (SlugItem "a&b=c") |]
+        [| box (WrappedItem(ItemId testGuid)) |]
+        [| box (Nested(testGuid, Show)) |]
+        [| box (Nested(testGuid, Edit)) |]
+    ]
 
 [<Theory>]
 [<MemberData(nameof roundTripCases)>]

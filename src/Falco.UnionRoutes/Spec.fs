@@ -236,7 +236,7 @@ module Spec =
         let paths = JsonObject()
         let schemas = JsonObject()
 
-        let allRoutes = Route.allRoutes<'TRoute> ()
+        let allRoutes = Route.allRoutes<'TRoute>()
 
         for route in allRoutes do
             let routeInfo = Route.info route

@@ -1108,8 +1108,10 @@ let ``validatePreconditions catches all missing preconditions`` () =
 [<Fact>]
 let ``validatePreconditions passes when all multiple preconditions registered`` () =
     let preconditions =
-        [ yield! Extractor.precondition<UserId, TestError> mockUserAuth
-          yield! Extractor.precondition<AdminId, TestError> mockAdminAuth ]
+        [
+            yield! Extractor.precondition<UserId, TestError> mockUserAuth
+            yield! Extractor.precondition<AdminId, TestError> mockAdminAuth
+        ]
 
     let result =
         Route.validatePreconditions<RouteWithMultiplePreconditions, TestError> preconditions
@@ -1174,7 +1176,7 @@ type ToggleState =
 type ToggleRoute = | [<Route(Path = "toggle/{state}")>] Toggle of state: ToggleState
 
 let toggleParser =
-    Extractor.typedParser<bool, ToggleState> (fun b -> Ok(if b then On else Off))
+    Extractor.typedParser<bool, ToggleState>(fun b -> Ok(if b then On else Off))
 
 let hydrateToggle () =
     Route.extractor<ToggleRoute, TestError> [] [ toggleParser ] makeError combineErrors
@@ -1460,13 +1462,16 @@ let ``FormBody extracts record from form`` () =
 
         test
             <@
-                result = Ok(
-                    FormBodyRoute.Submit(
-                        FormBody
-                            { Username = "admin"
-                              Password = "secret" }
+                result =
+                    Ok(
+                        FormBodyRoute.Submit(
+                            FormBody
+                                {
+                                    Username = "admin"
+                                    Password = "secret"
+                                }
+                        )
                     )
-                )
             @>
     }
 
@@ -1494,8 +1499,10 @@ let ``FormBody coexists with PreCondition`` () =
             Ok(
                 FormBodyRoute.SubmitWithAuth(
                     FormBody
-                        { Username = "admin"
-                          Password = "secret" },
+                        {
+                            Username = "admin"
+                            Password = "secret"
+                        },
                     PreCondition(UserId userId)
                 )
             ),
@@ -1564,13 +1571,16 @@ let ``FormBody scalar field unchanged by multi-value handling`` () =
 
         test
             <@
-                result = Ok(
-                    FormBodyRoute.Submit(
-                        FormBody
-                            { Username = "admin"
-                              Password = "secret" }
+                result =
+                    Ok(
+                        FormBodyRoute.Submit(
+                            FormBody
+                                {
+                                    Username = "admin"
+                                    Password = "secret"
+                                }
+                        )
                     )
-                )
             @>
     }
 
@@ -1587,13 +1597,16 @@ let ``FormBody three repeated values map to a list`` () =
 
         test
             <@
-                result = Ok(
-                    TagsFormRoute.SubmitTags(
-                        FormBody
-                            { Name = "post"
-                              Tags = [ "x"; "y"; "z" ] }
+                result =
+                    Ok(
+                        TagsFormRoute.SubmitTags(
+                            FormBody
+                                {
+                                    Name = "post"
+                                    Tags = [ "x"; "y"; "z" ]
+                                }
+                        )
                     )
-                )
             @>
     }
 
@@ -1618,7 +1631,8 @@ let ``extractor fails for tuple field type`` () =
 
         let ctx = createMockContextWithRoute [ ("value", "test") ]
 
-        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (TupleFieldRoute.TupleBad(0, "")) ctx :> Task)
+        let! ex =
+            Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (TupleFieldRoute.TupleBad(0, "")) ctx :> Task)
 
         test <@ ex.Message.Contains("Tuple") @>
     }
@@ -1631,7 +1645,8 @@ let ``extractor fails for record field type`` () =
 
         let ctx = createMockContextWithRoute [ ("value", "test") ]
 
-        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (RecordFieldRoute.RecordBad { X = 0 }) ctx :> Task)
+        let! ex =
+            Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (RecordFieldRoute.RecordBad { X = 0 }) ctx :> Task)
 
         test <@ ex.Message.Contains("Record") @>
     }
@@ -1658,7 +1673,8 @@ let ``extractor fails for option on non-QueryParam field`` () =
 
         let ctx = createMockContextWithRoute [ ("id", Guid.NewGuid().ToString()) ]
 
-        let! ex = Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (BadOptionRoute.BadOption None) ctx :> Task)
+        let! ex =
+            Assert.ThrowsAnyAsync<exn>(fun () -> hydrate (BadOptionRoute.BadOption None) ctx :> Task)
 
         test <@ ex.Message.Contains("Option types only supported for QueryParam") @>
     }
@@ -1749,11 +1765,13 @@ let ``parser constraint not applied when path already has constraint`` () =
         fun _ctx -> System.Threading.Tasks.Task.CompletedTask
 
     let config: EndpointConfig<string> =
-        { Preconditions = []
-          Parsers = [ slugParser ]
-          MakeError = id
-          CombineErrors = String.concat "; "
-          ToErrorResponse = fun e -> Falco.Response.ofPlainText e }
+        {
+            Preconditions = []
+            Parsers = [ slugParser ]
+            MakeError = id
+            CombineErrors = String.concat "; "
+            ToErrorResponse = fun e -> Falco.Response.ofPlainText e
+        }
 
     let endpoints = Route.endpoints config handler
     test <@ List.length endpoints = 1 @>
